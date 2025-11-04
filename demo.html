@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Control - Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 1200px;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .login-section {
+            max-width: 400px;
+            margin: 0 auto 40px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .credentials {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+
+        .credentials h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+
+        .credential-item {
+            background: white;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .credential-item strong {
+            color: #764ba2;
+        }
+
+        .dashboard {
+            display: none;
+        }
+
+        .dashboard.active {
+            display: block;
+        }
+
+        .nav {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .nav h2 {
+            color: #333;
+            margin: 0;
+        }
+
+        .logout-btn {
+            padding: 10px 20px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .logout-btn:hover {
+            background: #c82333;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-left: 5px solid;
+            transition: transform 0.3s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-card.primary { border-color: #2196F3; }
+        .stat-card.success { border-color: #4CAF50; }
+        .stat-card.warning { border-color: #FF9800; }
+        .stat-card.danger { border-color: #F44336; }
+        .stat-card.info { border-color: #00BCD4; }
+        .stat-card.purple { border-color: #9C27B0; }
+
+        .stat-card h3 {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-card .value {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .stat-card.primary .value { color: #2196F3; }
+        .stat-card.success .value { color: #4CAF50; }
+        .stat-card.warning .value { color: #FF9800; }
+        .stat-card.danger .value { color: #F44336; }
+        .stat-card.info .value { color: #00BCD4; }
+        .stat-card.purple .value { color: #9C27B0; }
+
+        .stat-card .description {
+            color: #999;
+            font-size: 0.9em;
+        }
+
+        .features {
+            background: #f8f9fa;
+            padding: 30px;
+            border-radius: 12px;
+        }
+
+        .features h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+        }
+
+        .feature-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .feature-icon {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+
+        .feature-text h4 {
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .feature-text p {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .alert {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .alert strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.5em;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .nav {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Sistema de Monitoreo de Técnicos</h1>
+            <p>Versión Demo - Frontend con Datos Simulados</p>
+        </div>
+
+        <div class="content">
+            <!-- Login Section -->
+            <div id="loginSection" class="login-section">
+                <div class="alert">
+                    <strong>⚠️ Modo Demo</strong>
+                    Esta es una versión de demostración que funciona sin backend. Los datos son simulados.
+                </div>
+
+                <div class="credentials">
+                    <h3>🔐 Credenciales de Prueba</h3>
+                    <div class="credential-item">
+                        <strong>Admin:</strong> admin@company.com / Test1234
+                    </div>
+                    <div class="credential-item">
+                        <strong>Dispatcher:</strong> dispatcher@company.com / Test1234
+                    </div>
+                    <div class="credential-item">
+                        <strong>Técnico:</strong> tech1@company.com / Test1234
+                    </div>
+                </div>
+
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="email">Email:</label>
+                        <input type="email" id="email" value="admin@company.com" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password:</label>
+                        <input type="password" id="password" value="Test1234" required>
+                    </div>
+                    <button type="submit" class="btn">
+                        <span id="btnText">Iniciar Sesión</span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Dashboard Section -->
+            <div id="dashboardSection" class="dashboard">
+                <div class="nav">
+                    <h2>📊 Dashboard Principal</h2>
+                    <button class="logout-btn" onclick="logout()">Cerrar Sesión</button>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card primary">
+                        <h3>Total Órdenes</h3>
+                        <div class="value">156</div>
+                        <div class="description">+12% vs mes anterior</div>
+                    </div>
+
+                    <div class="stat-card success">
+                        <h3>Órdenes Activas</h3>
+                        <div class="value">28</div>
+                        <div class="description">En progreso ahora</div>
+                    </div>
+
+                    <div class="stat-card info">
+                        <h3>Completadas Hoy</h3>
+                        <div class="value">15</div>
+                        <div class="description">94% de cumplimiento</div>
+                    </div>
+
+                    <div class="stat-card warning">
+                        <h3>Alertas SLA</h3>
+                        <div class="value">3</div>
+                        <div class="description">Requieren atención</div>
+                    </div>
+
+                    <div class="stat-card success">
+                        <h3>Técnicos Disponibles</h3>
+                        <div class="value">12</div>
+                        <div class="description">De 18 totales</div>
+                    </div>
+
+                    <div class="stat-card danger">
+                        <h3>Técnicos Ocupados</h3>
+                        <div class="value">6</div>
+                        <div class="description">En campo ahora</div>
+                    </div>
+
+                    <div class="stat-card purple">
+                        <h3>Órdenes Pendientes</h3>
+                        <div class="value">8</div>
+                        <div class="description">Sin asignar</div>
+                    </div>
+
+                    <div class="stat-card info">
+                        <h3>Tiempo Promedio</h3>
+                        <div class="value">2.4h</div>
+                        <div class="description">Por orden completada</div>
+                    </div>
+                </div>
+
+                <div class="features">
+                    <h3>🎯 Funcionalidades Implementadas</h3>
+                    <div class="feature-list">
+                        <div class="feature-item">
+                            <div class="feature-icon">✅</div>
+                            <div class="feature-text">
+                                <h4>Autenticación JWT</h4>
+                                <p>Sistema de login seguro con tokens</p>
+                            </div>
+                        </div>
+
+                        <div class="feature-item">
+                            <div class="feature-icon">📱</div>
+                            <div class="feature-text">
+                                <h4>Diseño Responsive</h4>
+                                <p>Optimizado para móvil, tablet y desktop</p>
+                            </div>
+                        </div>
+
+                        <div class="feature-item">
+                            <div class="feature-icon">🎨</div>
+                            <div class="feature-text">
+                                <h4>Material-UI</h4>
+                                <p>Interfaz moderna y profesional</p>
+                            </div>
+                        </div>
+
+                        <div class="feature-item">
+                            <div class="feature-icon">🔄</div>
+                            <div class="feature-text">
+                                <h4>Redux Store</h4>
+                                <p>Gestión de estado centralizada</p>
+                            </div>
+                        </div>
+
+                        <div class="feature-item">
+                            <div class="feature-icon">🗺️</div>
+                            <div class="feature-text">
+                                <h4>Mapbox Integration</h4>
+                                <p>Tracking en tiempo real de técnicos</p>
+                            </div>
+                        </div>
+
+                        <div class="feature-item">
+                            <div class="feature-icon">📊</div>
+                            <div class="feature-text">
+                                <h4>Dashboard KPIs</h4>
+                                <p>Métricas y estadísticas en tiempo real</p>
+                            </div>
+                        </div>
+
+                        <div class="feature-item">
+                            <div class="feature-icon">🔌</div>
+                            <div class="feature-text">
+                                <h4>WebSocket</h4>
+                                <p>Actualizaciones en tiempo real</p>
+                            </div>
+                        </div>
+
+                        <div class="feature-item">
+                            <div class="feature-icon">🐳</div>
+                            <div class="feature-text">
+                                <h4>Docker Ready</h4>
+                                <p>Listo para deploy en contenedores</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 30px; padding: 20px; background: #e3f2fd; border-radius: 8px;">
+                    <h3 style="color: #1976d2; margin-bottom: 15px;">🚀 Próximos Pasos</h3>
+                    <p style="color: #666; margin-bottom: 10px;">
+                        Para ver la aplicación completa con todas las funcionalidades:
+                    </p>
+                    <ol style="color: #666; padding-left: 20px;">
+                        <li style="margin-bottom: 8px;"><strong>Instalar Docker Desktop</strong> (ver GUIA_INSTALACION_DOCKER.md)</li>
+                        <li style="margin-bottom: 8px;"><strong>Ejecutar:</strong> <code style="background: white; padding: 4px 8px; border-radius: 4px;">docker compose up --build -d</code></li>
+                        <li style="margin-bottom: 8px;"><strong>Acceder a:</strong> http://localhost</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const loginForm = document.getElementById('loginForm');
+        const loginSection = document.getElementById('loginSection');
+        const dashboardSection = document.getElementById('dashboardSection');
+        const btnText = document.getElementById('btnText');
+
+        // Credenciales válidas (demo)
+        const validCredentials = [
+            { email: 'admin@company.com', password: 'Test1234', role: 'admin' },
+            { email: 'dispatcher@company.com', password: 'Test1234', role: 'dispatcher' },
+            { email: 'tech1@company.com', password: 'Test1234', role: 'technician' }
+        ];
+
+        loginForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            // Mostrar loading
+            btnText.innerHTML = '<span class="loading"></span>';
+
+            // Simular delay de autenticación
+            setTimeout(() => {
+                const user = validCredentials.find(
+                    u => u.email === email && u.password === password
+                );
+
+                if (user) {
+                    // Login exitoso
+                    localStorage.setItem('demoUser', JSON.stringify(user));
+                    showDashboard();
+                } else {
+                    // Login fallido
+                    alert('❌ Credenciales incorrectas. Usa las credenciales de prueba mostradas.');
+                    btnText.textContent = 'Iniciar Sesión';
+                }
+            }, 1000);
+        });
+
+        function showDashboard() {
+            loginSection.style.display = 'none';
+            dashboardSection.classList.add('active');
+        }
+
+        function logout() {
+            localStorage.removeItem('demoUser');
+            loginSection.style.display = 'block';
+            dashboardSection.classList.remove('active');
+            document.getElementById('btnText').textContent = 'Iniciar Sesión';
+        }
+
+        // Verificar si ya está logueado
+        window.addEventListener('load', function() {
+            const user = localStorage.getItem('demoUser');
+            if (user) {
+                showDashboard();
+            }
+        });
+    </script>
+</body>
+</html>
