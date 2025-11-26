@@ -1,4 +1,4 @@
-# 🚀 Guía Paso a Paso: Deploy en AWS
+x# 🚀 Guía Paso a Paso: Deploy en AWS
 
 Esta guía te llevará desde cero hasta tener tu sistema **Field Service Manager** completamente funcional en AWS.
 

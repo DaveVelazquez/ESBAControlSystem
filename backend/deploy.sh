@@ -13,7 +13,7 @@ NC='\033[0m' # No Color
 
 # Variables (configurar según tu entorno)
 AWS_REGION=${AWS_REGION:-"us-east-1"}
-AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID:-""}
+AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID:-"507297234735"}
 ECR_REPOSITORY="field-service-backend"
 ECS_CLUSTER="field-service-cluster"
 ECS_SERVICE="field-service-backend"
