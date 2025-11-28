@@ -74,8 +74,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: 'frontend-web/package-lock.json'
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -86,7 +84,9 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend-web
-        run: npm ci
+        run: |
+          npm cache clean --force
+          npm install
 
       - name: Build application
         working-directory: frontend-web
