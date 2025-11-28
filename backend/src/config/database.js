@@ -1,14 +1,22 @@
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
 
+// Configuración optimizada para Supabase y PostgreSQL local
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DB_SSL === 'true' ? {
+  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('supabase.co') ? {
     rejectUnauthorized: false
-  } : false,
-  max: 20,
+  } : (process.env.DB_SSL === 'true' ? {
+    rejectUnauthorized: false
+  } : false),
+  max: process.env.NODE_ENV === 'production' ? 10 : 5, // Menor pool para Supabase free tier
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000, // Más tiempo para conexiones remotas
+  acquireTimeoutMillis: 60000,
+  createTimeoutMillis: 30000,
+  destroyTimeoutMillis: 5000,
+  reapIntervalMillis: 1000,
+  createRetryIntervalMillis: 200
 });
 
 pool.on('connect', () => {

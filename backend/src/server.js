@@ -6,6 +6,9 @@ const compression = require('compression');
 const http = require('http');
 const socketIo = require('socket.io');
 
+// Initialize Redis connection
+const { connectRedis } = require('./config/redis');
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const ordersRoutes = require('./routes/orders');
@@ -117,15 +120,30 @@ app.use('*', (req, res) => {
   });
 });
 
-// Start server
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
+// Initialize connections
+const initializeServer = async () => {
+  try {
+    // Connect to Redis
+    await connectRedis();
+    logger.info('✅ Redis connection initialized');
+  } catch (error) {
+    logger.warn('⚠️ Redis connection failed, continuing without cache:', error.message);
+  }
 
-server.listen(PORT, HOST, () => {
-  logger.info(`🚀 Server running on http://${HOST}:${PORT}`);
-  logger.info(`📝 Environment: ${process.env.NODE_ENV}`);
-  logger.info(`💾 Database: ${process.env.DB_HOST}:${process.env.DB_PORT}`);
-});
+  // Start server
+  const PORT = process.env.PORT || 3000;
+  const HOST = process.env.HOST || '0.0.0.0';
+
+  server.listen(PORT, HOST, () => {
+    logger.info(`🚀 Server running on http://${HOST}:${PORT}`);
+    logger.info(`📝 Environment: ${process.env.NODE_ENV}`);
+    logger.info(`💾 Database: Connected to PostgreSQL`);
+    logger.info(`🗄️ Redis: ${process.env.REDIS_URL ? 'Connected to external Redis' : 'Local Redis'}`);
+  });
+};
+
+// Initialize server
+initializeServer();
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
