@@ -20,7 +20,6 @@ jobs:
   deploy-backend:
     name: Deploy Backend to ECS
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.modified, 'backend/') || github.event_name == 'workflow_dispatch'
     
     steps:
       - name: Checkout code
@@ -66,7 +65,6 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend to S3 + CloudFront
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.modified, 'frontend-web/') || github.event_name == 'workflow_dispatch'
     
     steps:
       - name: Checkout code
