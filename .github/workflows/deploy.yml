@@ -38,8 +38,16 @@ jobs:
 
       - name: Create ECR repository if not exists
         run: |
-          aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION || \
-          aws ecr create-repository --repository-name $ECR_REPOSITORY --region $AWS_REGION
+          if ! aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION > /dev/null 2>&1; then
+            echo "Repository $ECR_REPOSITORY does not exist, trying to create it..."
+            aws ecr create-repository --repository-name $ECR_REPOSITORY --region $AWS_REGION || {
+              echo "Failed to create repository. Please create it manually or add ecr:CreateRepository permission."
+              echo "Repository needed: $ECR_REPOSITORY"
+              exit 1
+            }
+          else
+            echo "Repository $ECR_REPOSITORY already exists"
+          fi
 
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
