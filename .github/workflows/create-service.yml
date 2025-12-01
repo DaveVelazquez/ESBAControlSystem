@@ -40,6 +40,24 @@ jobs:
           SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=default" "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[0].GroupId" --output text)
           echo "Using Security Group: $SG_ID"
           
+          # Create or get execution role
+          EXECUTION_ROLE_ARN=$(aws iam get-role --role-name ecsTaskExecutionRole --query 'Role.Arn' --output text 2>/dev/null || {
+            echo "Creating ecsTaskExecutionRole..."
+            aws iam create-role --role-name ecsTaskExecutionRole --assume-role-policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Principal": {"Service": "ecs-tasks.amazonaws.com"},
+                "Action": "sts:AssumeRole"
+              }]
+            }' --query 'Role.Arn' --output text
+            
+            aws iam attach-role-policy --role-name ecsTaskExecutionRole --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+            echo "arn:aws:iam::${{ steps.account.outputs.account_id }}:role/ecsTaskExecutionRole"
+          })
+          
+          echo "Using execution role: $EXECUTION_ROLE_ARN"
+          
           # Register task definition
           aws ecs register-task-definition \
             --family ${{ env.ECS_SERVICE }} \
@@ -47,6 +65,7 @@ jobs:
             --requires-compatibilities FARGATE \
             --cpu 256 \
             --memory 512 \
+            --execution-role-arn "$EXECUTION_ROLE_ARN" \
             --container-definitions '[{
               "name": "${{ env.ECS_SERVICE }}",
               "image": "${{ steps.account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/field-service-backend:${{ github.event.inputs.image_tag || 'latest' }}",
@@ -62,8 +81,14 @@ jobs:
 
       - name: Create ECS service
         run: |
+          # Get VPC and security group again
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query "Vpcs[0].VpcId" --output text)
+          SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=default" "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[0].GroupId" --output text)
+          
           # Get default subnets
           SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" --query "Subnets[*].SubnetId" --output text | tr '\t' ',' | tr ' ' ',')
+          echo "Using VPC: $VPC_ID"
+          echo "Using Security Group: $SG_ID"
           echo "Using subnets: $SUBNETS"
           
           # Create service if it doesn't exist
