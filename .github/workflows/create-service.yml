@@ -1,0 +1,104 @@
+name: Create ECS Service Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy'
+        required: false
+        default: 'latest'
+
+env:
+  AWS_REGION: us-east-1
+  ECS_CLUSTER: field-service-cluster
+  ECS_SERVICE: backend-service
+
+jobs:
+  create-service:
+    name: Create ECS Service
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get account ID
+        id: account
+        run: echo "account_id=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_OUTPUT
+
+      - name: Create or update task definition
+        run: |
+          # Get default VPC
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query "Vpcs[0].VpcId" --output text)
+          echo "Using VPC: $VPC_ID"
+          
+          # Get default security group
+          SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=default" "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[0].GroupId" --output text)
+          echo "Using Security Group: $SG_ID"
+          
+          # Register task definition
+          aws ecs register-task-definition \
+            --family ${{ env.ECS_SERVICE }} \
+            --network-mode awsvpc \
+            --requires-compatibilities FARGATE \
+            --cpu 256 \
+            --memory 512 \
+            --container-definitions '[{
+              "name": "${{ env.ECS_SERVICE }}",
+              "image": "${{ steps.account.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/field-service-backend:${{ github.event.inputs.image_tag || 'latest' }}",
+              "portMappings": [{"containerPort": 3000, "protocol": "tcp"}],
+              "essential": true,
+              "environment": [
+                {"name": "NODE_ENV", "value": "production"},
+                {"name": "PORT", "value": "3000"},
+                {"name": "DATABASE_URL", "value": "${{ secrets.DATABASE_URL }}"},
+                {"name": "REDIS_URL", "value": "${{ secrets.REDIS_URL }}"}
+              ]
+            }]'
+
+      - name: Create ECS service
+        run: |
+          # Get default subnets
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" --query "Subnets[*].SubnetId" --output text | tr '\t' ',' | tr ' ' ',')
+          echo "Using subnets: $SUBNETS"
+          
+          # Create service if it doesn't exist
+          if ! aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} --query "services[0].serviceName" --output text 2>/dev/null | grep -q ${{ env.ECS_SERVICE }}; then
+            echo "Creating new ECS service..."
+            aws ecs create-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service-name ${{ env.ECS_SERVICE }} \
+              --task-definition ${{ env.ECS_SERVICE }} \
+              --desired-count 1 \
+              --launch-type FARGATE \
+              --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG_ID],assignPublicIp=ENABLED}"
+          else
+            echo "Service exists, updating..."
+            aws ecs update-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service ${{ env.ECS_SERVICE }} \
+              --force-new-deployment
+          fi
+
+      - name: Wait for service to be stable
+        run: |
+          echo "Waiting for service to become stable..."
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }}
+          echo "Service is now stable!"
+
+      - name: Get service status
+        run: |
+          echo "Service status:"
+          aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query "services[0].{Name:serviceName,Status:status,Running:runningCount,Desired:desiredCount}"
+            
+          echo "Tasks:"
+          aws ecs list-tasks --cluster ${{ env.ECS_CLUSTER }} --service-name ${{ env.ECS_SERVICE }}
