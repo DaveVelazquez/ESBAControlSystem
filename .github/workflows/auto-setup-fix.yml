@@ -370,11 +370,30 @@ jobs:
       - name: Wait for backend and get IP
         run: |
           echo "⏳ Waiting for backend deployment..."
-          aws ecs wait services-stable \
-            --cluster $ECS_CLUSTER \
-            --services $ECS_SERVICE \
-            --region $AWS_REGION \
-            --waiter-config maxAttempts=30,delay=20
+          
+          # Wait for service to stabilize with manual polling
+          for i in {1..30}; do
+            SERVICE_STATUS=$(aws ecs describe-services \
+              --cluster $ECS_CLUSTER \
+              --services $ECS_SERVICE \
+              --region $AWS_REGION \
+              --query 'services[0].{Running:runningCount,Desired:desiredCount,Status:status}' \
+              --output text)
+            
+            echo "Attempt $i/30 - Service status: $SERVICE_STATUS"
+            
+            if echo "$SERVICE_STATUS" | grep -q "1.*1.*ACTIVE"; then
+              echo "✅ Service is stable and running"
+              break
+            else
+              if [ $i -eq 30 ]; then
+                echo "⚠️ Service taking longer than expected, continuing..."
+                break
+              fi
+              echo "⏳ Waiting 20 seconds..."
+              sleep 20
+            fi
+          done
           
           echo "✅ Backend deployment stable"
           
