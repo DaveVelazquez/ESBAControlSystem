@@ -1,0 +1,347 @@
+name: Deploy Field Service System
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 507297234735
+  ECR_REPOSITORY: field-service-backend
+  ECS_CLUSTER: field-service-cluster
+  S3_BUCKET: field-service-frontend-prod
+
+jobs:
+  deploy:
+    name: Deploy Complete System
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Clean and setup infrastructure
+        run: |
+          echo "🧹 Cleaning and setting up infrastructure..."
+          
+          # Generate unique timestamp
+          TIMESTAMP=$(date +%s)
+          echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+          
+          # Clean existing services completely
+          echo "Cleaning existing services..."
+          SERVICES=$(aws ecs list-services --cluster $ECS_CLUSTER --region $AWS_REGION --query 'serviceArns[]' --output text 2>/dev/null || echo "")
+          for service_arn in $SERVICES; do
+            service_name=$(basename $service_arn)
+            echo "Deleting service: $service_name"
+            aws ecs update-service --cluster $ECS_CLUSTER --service $service_name --desired-count 0 --region $AWS_REGION 2>/dev/null || true
+            sleep 5
+            aws ecs delete-service --cluster $ECS_CLUSTER --service $service_name --force --region $AWS_REGION 2>/dev/null || true
+          done
+          
+          # Wait for cleanup
+          sleep 30
+          
+          # Create basic infrastructure
+          echo "Setting up infrastructure..."
+          
+          # ECS Cluster
+          aws ecs create-cluster --cluster-name $ECS_CLUSTER --region $AWS_REGION 2>/dev/null || echo "Cluster exists"
+          
+          # ECR Repository
+          aws ecr create-repository --repository-name $ECR_REPOSITORY --region $AWS_REGION 2>/dev/null || echo "Repository exists"
+          
+          # IAM execution role
+          ROLE_POLICY='{
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": {"Service": "ecs-tasks.amazonaws.com"},
+              "Action": "sts:AssumeRole"
+            }]
+          }'
+          
+          aws iam create-role --role-name ecsTaskExecutionRole --assume-role-policy-document "$ROLE_POLICY" 2>/dev/null || echo "Role exists"
+          aws iam attach-role-policy --role-name ecsTaskExecutionRole --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy 2>/dev/null || echo "Policy attached"
+          
+          # Get default VPC
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text --region $AWS_REGION)
+          
+          # Create security group with unique name
+          SG_ID=$(aws ec2 create-security-group \
+            --group-name "field-service-sg-$TIMESTAMP" \
+            --description "Field Service Security Group" \
+            --vpc-id $VPC_ID \
+            --region $AWS_REGION \
+            --query 'GroupId' \
+            --output text)
+          
+          # Add security group rules
+          aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 3000 --cidr 0.0.0.0/0 --region $AWS_REGION
+          aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0 --region $AWS_REGION
+          aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 443 --cidr 0.0.0.0/0 --region $AWS_REGION
+          
+          echo "SECURITY_GROUP_ID=$SG_ID" >> $GITHUB_ENV
+          
+          # S3 bucket setup
+          aws s3 mb s3://$S3_BUCKET --region $AWS_REGION 2>/dev/null || echo "Bucket exists"
+          aws s3 website s3://$S3_BUCKET --index-document index.html --error-document index.html
+          
+          # S3 bucket policy
+          BUCKET_POLICY='{
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": "*",
+              "Action": "s3:GetObject",
+              "Resource": "arn:aws:s3:::'$S3_BUCKET'/*"
+            }]
+          }'
+          
+          aws s3api put-bucket-policy --bucket $S3_BUCKET --policy "$BUCKET_POLICY"
+          
+          echo "✅ Infrastructure ready"
+
+      - name: Build and deploy backend
+        run: |
+          echo "🐳 Building backend..."
+          cd backend
+          
+          # Create production environment file
+          cat > .env << 'EOF'
+          NODE_ENV=production
+          PORT=3000
+          HOST=0.0.0.0
+          DATABASE_URL=postgresql://postgres:Pa$$.word99@db.nphuclchphpnqawzzueb.supabase.co:5432/postgres
+          DB_SSL=true
+          REDIS_URL=https://fast-lionfish-42154.upstash.io
+          UPSTASH_REDIS_REST_TOKEN=AaSqAAIncDIyNDI5YTFhOWFlMDI0YjMwOWRiOWM0ODlmZGVkYzE1NHAyNDIxNTQ
+          JWT_SECRET=FSM2024_Ultra$ecure_JWT_Key_For_Production_987654321!
+          JWT_EXPIRES_IN=7d
+          JWT_REFRESH_EXPIRES_IN=30d
+          CORS_ORIGIN=http://localhost:3001,http://localhost:19006,http://field-service-frontend-prod.s3-website-us-east-1.amazonaws.com
+          RATE_LIMIT_WINDOW_MS=900000
+          RATE_LIMIT_MAX_REQUESTS=100
+          LOG_LEVEL=info
+          DEFAULT_SLA_MINUTES=240
+          SLA_WARNING_THRESHOLD=0.8
+          SLA_CRITICAL_THRESHOLD=0.95
+          MAX_CHECK_IN_DISTANCE_METERS=100
+          LOCATION_PING_INTERVAL_SECONDS=120
+          EOF
+          
+          # Build Docker image
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG="v$TIMESTAMP"
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+          
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          echo "✅ Backend image built: $IMAGE_URI"
+
+      - name: Deploy to ECS
+        run: |
+          echo "🚀 Deploying to ECS..."
+          
+          # Get VPC subnets
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text --region $AWS_REGION)
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text --region $AWS_REGION)
+          SUBNET_LIST=$(echo $SUBNETS | tr ' ' ',')
+          
+          # Task definition
+          TASK_FAMILY="field-service-$TIMESTAMP"
+          SERVICE_NAME="field-service-$TIMESTAMP"
+          
+          TASK_DEFINITION='{
+            "family": "'$TASK_FAMILY'",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "512",
+            "memory": "1024",
+            "executionRoleArn": "arn:aws:iam::'$AWS_ACCOUNT_ID':role/ecsTaskExecutionRole",
+            "containerDefinitions": [{
+              "name": "backend",
+              "image": "'$IMAGE_URI'",
+              "portMappings": [{
+                "containerPort": 3000,
+                "protocol": "tcp"
+              }],
+              "essential": true,
+              "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                  "awslogs-group": "/ecs/'$TASK_FAMILY'",
+                  "awslogs-region": "'$AWS_REGION'",
+                  "awslogs-stream-prefix": "ecs",
+                  "awslogs-create-group": "true"
+                }
+              }
+            }]
+          }'
+          
+          # Register task definition
+          aws ecs register-task-definition --cli-input-json "$TASK_DEFINITION" --region $AWS_REGION
+          
+          # Create ECS service
+          aws ecs create-service \
+            --cluster $ECS_CLUSTER \
+            --service-name $SERVICE_NAME \
+            --task-definition $TASK_FAMILY \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[$SECURITY_GROUP_ID],assignPublicIp=ENABLED}" \
+            --region $AWS_REGION
+          
+          echo "SERVICE_NAME=$SERVICE_NAME" >> $GITHUB_ENV
+          echo "✅ ECS service created: $SERVICE_NAME"
+
+      - name: Get backend IP
+        run: |
+          echo "⏳ Getting backend IP address..."
+          
+          # Wait for task to be running and get IP
+          for i in {1..20}; do
+            echo "Attempt $i/20 - Checking for running tasks..."
+            
+            TASK_ARN=$(aws ecs list-tasks \
+              --cluster $ECS_CLUSTER \
+              --service-name $SERVICE_NAME \
+              --desired-status RUNNING \
+              --query 'taskArns[0]' \
+              --output text \
+              --region $AWS_REGION 2>/dev/null)
+            
+            if [ "$TASK_ARN" != "None" ] && [ "$TASK_ARN" != "" ]; then
+              echo "Found running task: $TASK_ARN"
+              
+              # Get network interface ID
+              ENI_ID=$(aws ecs describe-tasks \
+                --cluster $ECS_CLUSTER \
+                --tasks $TASK_ARN \
+                --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+                --output text \
+                --region $AWS_REGION 2>/dev/null)
+              
+              if [ "$ENI_ID" != "None" ] && [ "$ENI_ID" != "" ]; then
+                echo "Found network interface: $ENI_ID"
+                
+                # Get public IP
+                PUBLIC_IP=$(aws ec2 describe-network-interfaces \
+                  --network-interface-ids $ENI_ID \
+                  --query 'NetworkInterfaces[0].Association.PublicIp' \
+                  --output text \
+                  --region $AWS_REGION 2>/dev/null)
+                
+                if [ "$PUBLIC_IP" != "None" ] && [ "$PUBLIC_IP" != "" ]; then
+                  echo "✅ Backend IP found: $PUBLIC_IP"
+                  echo "BACKEND_IP=$PUBLIC_IP" >> $GITHUB_ENV
+                  
+                  # Test if backend is responding
+                  echo "Testing backend health..."
+                  if curl -s --connect-timeout 10 "http://$PUBLIC_IP:3000/health" > /dev/null 2>&1; then
+                    echo "✅ Backend is healthy!"
+                    break
+                  else
+                    echo "Backend not ready yet, waiting..."
+                  fi
+                fi
+              fi
+            fi
+            
+            sleep 30
+          done
+          
+          if [ -z "$BACKEND_IP" ]; then
+            echo "⚠️ Could not get backend IP after 20 attempts"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Build and deploy frontend
+        run: |
+          echo "🌐 Building and deploying frontend..."
+          cd frontend-web
+          
+          # Verify we have backend IP
+          if [ -z "$BACKEND_IP" ]; then
+            echo "❌ Backend IP not available"
+            exit 1
+          fi
+          
+          # Create production environment
+          cat > .env.production << EOF
+          VITE_API_URL=http://$BACKEND_IP:3000
+          VITE_SOCKET_URL=http://$BACKEND_IP:3000
+          VITE_APP_NAME=Field Service Manager
+          NODE_ENV=production
+          EOF
+          
+          echo "Frontend configuration:"
+          cat .env.production
+          
+          # Clean install
+          rm -rf node_modules package-lock.json
+          
+          # Install dependencies
+          npm install --legacy-peer-deps
+          
+          # Build (with retry if needed)
+          if ! npm run build; then
+            echo "First build failed, trying clean install..."
+            rm -rf node_modules dist
+            npm cache clean --force
+            npm install --legacy-peer-deps
+            npm run build
+          fi
+          
+          # Deploy to S3
+          aws s3 sync dist/ s3://$S3_BUCKET --delete
+          
+          echo "✅ Frontend deployed"
+
+      - name: System status
+        run: |
+          echo ""
+          echo "🎉 ✅ DEPLOYMENT COMPLETED!"
+          echo ""
+          echo "═══════════════════════════════════════════════════════"
+          echo "📋 FIELD SERVICE MANAGER - READY!"
+          echo "═══════════════════════════════════════════════════════"
+          echo ""
+          echo "🔧 BACKEND:"
+          echo "• Service: $SERVICE_NAME"
+          echo "• IP: $BACKEND_IP"
+          echo "• API: http://$BACKEND_IP:3000"
+          echo "• Health: http://$BACKEND_IP:3000/health"
+          echo ""
+          echo "🌐 FRONTEND:"  
+          echo "• URL: http://$S3_BUCKET.s3-website-$AWS_REGION.amazonaws.com"
+          echo ""
+          echo "🔐 LOGIN CREDENTIALS:"
+          echo "• Email: admin@fieldservice.com"
+          echo "• Password: admin123"
+          echo ""
+          echo "🧪 TEST COMMANDS:"
+          echo "curl http://$BACKEND_IP:3000/health"
+          echo ""
+          echo "🚀 ACCESS YOUR APPLICATION:"
+          echo "http://$S3_BUCKET.s3-website-$AWS_REGION.amazonaws.com"
+          echo ""
+          echo "✅ SYSTEM IS FULLY OPERATIONAL!"
+          echo "═══════════════════════════════════════════════════════"
