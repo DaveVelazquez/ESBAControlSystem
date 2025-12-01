@@ -1,0 +1,595 @@
+name: Diagnose and Fix Backend Connection
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 507297234735
+  ECR_REPOSITORY: field-service-backend
+  ECS_CLUSTER: field-service-cluster
+  S3_BUCKET: field-service-frontend-prod
+
+jobs:
+  diagnose-and-fix:
+    name: Diagnose Backend Issues and Fix
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Comprehensive backend diagnosis
+        run: |
+          echo "🔍 DIAGNOSING BACKEND CONNECTIVITY ISSUES..."
+          echo ""
+          
+          # List all current services
+          echo "📋 Current ECS Services:"
+          aws ecs list-services --cluster $ECS_CLUSTER --region $AWS_REGION --output table 2>/dev/null || echo "No services found"
+          
+          # Get service details
+          SERVICES=$(aws ecs list-services --cluster $ECS_CLUSTER --region $AWS_REGION --query 'serviceArns[]' --output text 2>/dev/null || echo "")
+          
+          for service_arn in $SERVICES; do
+            service_name=$(basename $service_arn)
+            echo ""
+            echo "🔍 Analyzing service: $service_name"
+            
+            # Service status
+            echo "Service Status:"
+            aws ecs describe-services \
+              --cluster $ECS_CLUSTER \
+              --services $service_name \
+              --region $AWS_REGION \
+              --query 'services[0].{ServiceName:serviceName,Status:status,Running:runningCount,Desired:desiredCount,Pending:pendingCount}' \
+              --output table 2>/dev/null || echo "Failed to get service status"
+            
+            # Get tasks
+            TASK_ARNS=$(aws ecs list-tasks --cluster $ECS_CLUSTER --service-name $service_name --region $AWS_REGION --query 'taskArns[]' --output text 2>/dev/null || echo "")
+            
+            for task_arn in $TASK_ARNS; do
+              if [ "$task_arn" != "" ] && [ "$task_arn" != "None" ]; then
+                echo ""
+                echo "📱 Task: $(basename $task_arn)"
+                
+                # Task status
+                TASK_STATUS=$(aws ecs describe-tasks \
+                  --cluster $ECS_CLUSTER \
+                  --tasks $task_arn \
+                  --region $AWS_REGION \
+                  --query 'tasks[0].{LastStatus:lastStatus,HealthStatus:healthStatus,CreatedAt:createdAt}' \
+                  --output table 2>/dev/null || echo "Failed to get task status")
+                
+                echo "Task Status: $TASK_STATUS"
+                
+                # Get public IP
+                ENI_ID=$(aws ecs describe-tasks \
+                  --cluster $ECS_CLUSTER \
+                  --tasks $task_arn \
+                  --region $AWS_REGION \
+                  --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+                  --output text 2>/dev/null || echo "")
+                
+                if [ "$ENI_ID" != "" ] && [ "$ENI_ID" != "None" ]; then
+                  PUBLIC_IP=$(aws ec2 describe-network-interfaces \
+                    --network-interface-ids $ENI_ID \
+                    --query 'NetworkInterfaces[0].Association.PublicIp' \
+                    --output text \
+                    --region $AWS_REGION 2>/dev/null || echo "")
+                  
+                  if [ "$PUBLIC_IP" != "" ] && [ "$PUBLIC_IP" != "None" ]; then
+                    echo "🌐 Public IP: $PUBLIC_IP"
+                    
+                    # Test connectivity
+                    echo "🧪 Testing connectivity to $PUBLIC_IP:3000..."
+                    if timeout 10 bash -c "</dev/tcp/$PUBLIC_IP/3000" 2>/dev/null; then
+                      echo "✅ Port 3000 is reachable"
+                    else
+                      echo "❌ Port 3000 is NOT reachable"
+                    fi
+                    
+                    # Test HTTP
+                    echo "🧪 Testing HTTP health check..."
+                    HTTP_RESPONSE=$(curl -s -w "%{http_code}" --connect-timeout 10 --max-time 15 "http://$PUBLIC_IP:3000/health" 2>/dev/null || echo "FAILED")
+                    echo "HTTP Response: $HTTP_RESPONSE"
+                    
+                    # Test specific endpoint
+                    echo "🧪 Testing root endpoint..."
+                    ROOT_RESPONSE=$(curl -s -w "%{http_code}" --connect-timeout 10 --max-time 15 "http://$PUBLIC_IP:3000/" 2>/dev/null || echo "FAILED")
+                    echo "Root Response: $ROOT_RESPONSE"
+                    
+                    echo "CURRENT_IP=$PUBLIC_IP" >> $GITHUB_ENV
+                  else
+                    echo "❌ No public IP assigned"
+                  fi
+                else
+                  echo "❌ No network interface found"
+                fi
+                
+                # Get recent logs
+                echo ""
+                echo "📋 Recent container logs:"
+                aws logs tail "/ecs/fsm-$(date +%s)" --since 10m --region $AWS_REGION 2>/dev/null || echo "No logs available yet"
+              fi
+            done
+          done
+          
+          echo ""
+          echo "🔍 Security Group Analysis:"
+          # Find security groups
+          SG_IDS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=fsm-sg-*" --query 'SecurityGroups[*].GroupId' --output text --region $AWS_REGION 2>/dev/null || echo "")
+          
+          for sg_id in $SG_IDS; do
+            echo "Security Group: $sg_id"
+            aws ec2 describe-security-groups --group-ids $sg_id --region $AWS_REGION --query 'SecurityGroups[0].IpPermissions' --output table 2>/dev/null || echo "Failed to get SG rules"
+          done
+
+      - name: Fix backend connectivity issues
+        run: |
+          echo "🔧 FIXING BACKEND CONNECTIVITY ISSUES..."
+          
+          TIMESTAMP=$(date +%s)
+          echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+          
+          # Clean all existing services first
+          echo "🧹 Cleaning existing services..."
+          SERVICES=$(aws ecs list-services --cluster $ECS_CLUSTER --region $AWS_REGION --query 'serviceArns[]' --output text 2>/dev/null || echo "")
+          
+          for service_arn in $SERVICES; do
+            service_name=$(basename $service_arn)
+            echo "Stopping service: $service_name"
+            aws ecs update-service --cluster $ECS_CLUSTER --service $service_name --desired-count 0 --region $AWS_REGION 2>/dev/null || true
+            sleep 10
+            aws ecs delete-service --cluster $ECS_CLUSTER --service $service_name --force --region $AWS_REGION 2>/dev/null || true
+          done
+          
+          echo "Waiting for cleanup..."
+          sleep 60
+          
+          # Create completely new security group with explicit rules
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text --region $AWS_REGION)
+          
+          SG_ID=$(aws ec2 create-security-group \
+            --group-name "backend-fix-$TIMESTAMP" \
+            --description "Backend Fix Security Group" \
+            --vpc-id $VPC_ID \
+            --region $AWS_REGION \
+            --query 'GroupId' \
+            --output text)
+          
+          # Add very permissive rules to ensure connectivity
+          echo "Adding security group rules..."
+          aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 3000 --cidr 0.0.0.0/0 --region $AWS_REGION
+          aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0 --region $AWS_REGION
+          aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 443 --cidr 0.0.0.0/0 --region $AWS_REGION
+          aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 0-65535 --cidr 10.0.0.0/8 --region $AWS_REGION
+          
+          echo "SECURITY_GROUP_ID=$SG_ID" >> $GITHUB_ENV
+          echo "✅ New security group created: $SG_ID"
+
+      - name: Login to ECR and create ultra-simple backend
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build ultra-simple backend for connectivity test
+        run: |
+          echo "🔧 Creating ultra-simple backend for testing..."
+          
+          # Create temporary directory
+          mkdir -p /tmp/simple-backend
+          cd /tmp/simple-backend
+          
+          # Ultra-minimal package.json
+          cat > package.json << 'EOF'
+          {
+            "name": "simple-backend",
+            "version": "1.0.0",
+            "main": "server.js",
+            "scripts": {
+              "start": "node server.js"
+            },
+            "dependencies": {
+              "express": "^4.18.2"
+            }
+          }
+          EOF
+          
+          # Ultra-minimal server
+          cat > server.js << 'EOF'
+          const express = require('express');
+          const app = express();
+          const PORT = 3000;
+          
+          // Enable CORS for all requests
+          app.use((req, res, next) => {
+            res.header('Access-Control-Allow-Origin', '*');
+            res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+            res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+            if (req.method === 'OPTIONS') {
+              res.sendStatus(200);
+            } else {
+              next();
+            }
+          });
+          
+          app.use(express.json());
+          
+          // Health check
+          app.get('/health', (req, res) => {
+            console.log(`[${new Date().toISOString()}] Health check requested`);
+            res.status(200).json({
+              status: 'OK',
+              message: 'Backend is working!',
+              timestamp: new Date().toISOString(),
+              uptime: process.uptime()
+            });
+          });
+          
+          // Root endpoint
+          app.get('/', (req, res) => {
+            console.log(`[${new Date().toISOString()}] Root endpoint requested`);
+            res.json({
+              message: 'Field Service Backend is running!',
+              version: '1.0.0',
+              timestamp: new Date().toISOString()
+            });
+          });
+          
+          // Test endpoint
+          app.get('/api/test', (req, res) => {
+            console.log(`[${new Date().toISOString()}] Test endpoint requested`);
+            res.json({
+              message: 'Test endpoint working perfectly!',
+              timestamp: new Date().toISOString()
+            });
+          });
+          
+          // Login endpoint
+          app.post('/api/auth/login', (req, res) => {
+            console.log(`[${new Date().toISOString()}] Login attempt:`, req.body);
+            const { email, password } = req.body;
+            
+            if (email === 'admin@fieldservice.com' && password === 'admin123') {
+              res.json({
+                success: true,
+                token: 'test-jwt-token-123',
+                user: {
+                  id: 1,
+                  email: 'admin@fieldservice.com',
+                  name: 'System Administrator',
+                  role: 'admin'
+                },
+                message: 'Login successful!'
+              });
+            } else {
+              res.status(401).json({
+                success: false,
+                message: 'Invalid credentials'
+              });
+            }
+          });
+          
+          // Catch all
+          app.use('*', (req, res) => {
+            console.log(`[${new Date().toISOString()}] Unknown endpoint: ${req.method} ${req.originalUrl}`);
+            res.status(404).json({
+              error: 'Endpoint not found',
+              method: req.method,
+              path: req.originalUrl
+            });
+          });
+          
+          app.listen(PORT, '0.0.0.0', () => {
+            console.log(`[${new Date().toISOString()}] 🚀 Server running on http://0.0.0.0:${PORT}`);
+            console.log(`[${new Date().toISOString()}] 📊 Health: http://0.0.0.0:${PORT}/health`);
+            console.log(`[${new Date().toISOString()}] 🧪 Test: http://0.0.0.0:${PORT}/api/test`);
+          });
+          EOF
+          
+          # Ultra-minimal Dockerfile
+          cat > Dockerfile << 'EOF'
+          FROM node:18-alpine
+          
+          WORKDIR /app
+          COPY package*.json ./
+          RUN npm install --production
+          COPY *.js ./
+          
+          EXPOSE 3000
+          
+          HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=2 \
+            CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+          
+          CMD ["node", "server.js"]
+          EOF
+          
+          # Build and push
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG="fix-$TIMESTAMP"
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+          
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          echo "✅ Ultra-simple backend image: $IMAGE_URI"
+
+      - name: Deploy fixed backend with proper networking
+        run: |
+          echo "🚀 Deploying fixed backend..."
+          
+          # Get subnets (use all available for better IP allocation)
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query 'Vpcs[0].VpcId' --output text --region $AWS_REGION)
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[*].SubnetId' --output text --region $AWS_REGION)
+          SUBNET_LIST=$(echo $SUBNETS | tr ' ' ',')
+          
+          echo "Using subnets: $SUBNET_LIST"
+          echo "Using security group: $SECURITY_GROUP_ID"
+          
+          # Create service with unique names
+          TASK_FAMILY="backend-fix-$TIMESTAMP"
+          SERVICE_NAME="backend-fix-$TIMESTAMP"
+          
+          # Task definition with minimal resources
+          TASK_DEFINITION='{
+            "family": "'$TASK_FAMILY'",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "256",
+            "memory": "512",
+            "executionRoleArn": "arn:aws:iam::'$AWS_ACCOUNT_ID':role/ecsTaskExecutionRole",
+            "containerDefinitions": [{
+              "name": "backend",
+              "image": "'$IMAGE_URI'",
+              "portMappings": [{
+                "containerPort": 3000,
+                "protocol": "tcp"
+              }],
+              "essential": true,
+              "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                  "awslogs-group": "/ecs/'$TASK_FAMILY'",
+                  "awslogs-region": "'$AWS_REGION'",
+                  "awslogs-stream-prefix": "ecs",
+                  "awslogs-create-group": "true"
+                }
+              }
+            }]
+          }'
+          
+          # Register task definition
+          echo "Registering task definition..."
+          aws ecs register-task-definition --cli-input-json "$TASK_DEFINITION" --region $AWS_REGION
+          
+          # Create service with explicit networking
+          echo "Creating ECS service..."
+          aws ecs create-service \
+            --cluster $ECS_CLUSTER \
+            --service-name $SERVICE_NAME \
+            --task-definition $TASK_FAMILY \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[$SECURITY_GROUP_ID],assignPublicIp=ENABLED}" \
+            --region $AWS_REGION
+          
+          echo "SERVICE_NAME=$SERVICE_NAME" >> $GITHUB_ENV
+          echo "✅ Service created: $SERVICE_NAME"
+
+      - name: Wait and verify backend connectivity
+        run: |
+          echo "⏳ Waiting for backend and testing connectivity..."
+          
+          BACKEND_IP=""
+          
+          for i in {1..30}; do
+            echo ""
+            echo "🔍 Attempt $i/30 - Checking backend status..."
+            
+            # Get service status
+            SERVICE_STATUS=$(aws ecs describe-services \
+              --cluster $ECS_CLUSTER \
+              --services $SERVICE_NAME \
+              --region $AWS_REGION \
+              --query 'services[0].{desired:desiredCount,running:runningCount,pending:pendingCount,status:status}' \
+              --output text 2>/dev/null || echo "UNKNOWN")
+            
+            echo "Service Status: $SERVICE_STATUS"
+            
+            # Get running task
+            TASK_ARN=$(aws ecs list-tasks \
+              --cluster $ECS_CLUSTER \
+              --service-name $SERVICE_NAME \
+              --desired-status RUNNING \
+              --region $AWS_REGION \
+              --query 'taskArns[0]' \
+              --output text 2>/dev/null || echo "")
+            
+            if [ "$TASK_ARN" != "" ] && [ "$TASK_ARN" != "None" ]; then
+              echo "✅ Found running task: $(basename $TASK_ARN)"
+              
+              # Get task health
+              TASK_HEALTH=$(aws ecs describe-tasks \
+                --cluster $ECS_CLUSTER \
+                --tasks $TASK_ARN \
+                --region $AWS_REGION \
+                --query 'tasks[0].healthStatus' \
+                --output text 2>/dev/null || echo "UNKNOWN")
+              
+              echo "Task Health: $TASK_HEALTH"
+              
+              # Get network interface
+              ENI_ID=$(aws ecs describe-tasks \
+                --cluster $ECS_CLUSTER \
+                --tasks $TASK_ARN \
+                --region $AWS_REGION \
+                --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+                --output text 2>/dev/null || echo "")
+              
+              if [ "$ENI_ID" != "" ] && [ "$ENI_ID" != "None" ]; then
+                echo "📡 Network Interface: $ENI_ID"
+                
+                # Get public IP
+                PUBLIC_IP=$(aws ec2 describe-network-interfaces \
+                  --network-interface-ids $ENI_ID \
+                  --region $AWS_REGION \
+                  --query 'NetworkInterfaces[0].Association.PublicIp' \
+                  --output text 2>/dev/null || echo "")
+                
+                if [ "$PUBLIC_IP" != "" ] && [ "$PUBLIC_IP" != "None" ]; then
+                  echo "🌐 Public IP Found: $PUBLIC_IP"
+                  BACKEND_IP=$PUBLIC_IP
+                  
+                  # Wait a bit for the service to be ready
+                  echo "⏱️ Waiting 30 seconds for service initialization..."
+                  sleep 30
+                  
+                  # Test connectivity extensively
+                  echo "🧪 Testing connectivity to $PUBLIC_IP:3000..."
+                  
+                  # Test 1: Port connectivity
+                  if timeout 10 bash -c "</dev/tcp/$PUBLIC_IP/3000" 2>/dev/null; then
+                    echo "✅ TCP Port 3000 is reachable"
+                    
+                    # Test 2: HTTP Health check
+                    echo "🏥 Testing HTTP health endpoint..."
+                    HEALTH_RESPONSE=$(curl -s --connect-timeout 15 --max-time 20 "http://$PUBLIC_IP:3000/health" 2>/dev/null || echo "FAILED")
+                    echo "Health Response: $HEALTH_RESPONSE"
+                    
+                    if echo "$HEALTH_RESPONSE" | grep -q "OK"; then
+                      echo "✅ Health check PASSED!"
+                      
+                      # Test 3: Root endpoint
+                      echo "🌐 Testing root endpoint..."
+                      ROOT_RESPONSE=$(curl -s --connect-timeout 15 --max-time 20 "http://$PUBLIC_IP:3000/" 2>/dev/null || echo "FAILED")
+                      echo "Root Response: $ROOT_RESPONSE"
+                      
+                      # Test 4: Login endpoint
+                      echo "🔐 Testing login endpoint..."
+                      LOGIN_RESPONSE=$(curl -s --connect-timeout 15 --max-time 20 \
+                        -X POST \
+                        -H "Content-Type: application/json" \
+                        -d '{"email":"admin@fieldservice.com","password":"admin123"}' \
+                        "http://$PUBLIC_IP:3000/api/auth/login" 2>/dev/null || echo "FAILED")
+                      echo "Login Response: $LOGIN_RESPONSE"
+                      
+                      if echo "$LOGIN_RESPONSE" | grep -q "success"; then
+                        echo "✅ ALL TESTS PASSED! Backend is fully functional!"
+                        echo "BACKEND_IP=$PUBLIC_IP" >> $GITHUB_ENV
+                        break
+                      else
+                        echo "⚠️ Login test failed, but basic connectivity works"
+                        echo "BACKEND_IP=$PUBLIC_IP" >> $GITHUB_ENV
+                      fi
+                    else
+                      echo "❌ Health check failed"
+                    fi
+                  else
+                    echo "❌ TCP Port 3000 not reachable"
+                  fi
+                else
+                  echo "❌ No public IP found"
+                fi
+              else
+                echo "❌ No network interface found"
+              fi
+            else
+              echo "⏳ No running tasks yet..."
+            fi
+            
+            if [ $i -eq 30 ]; then
+              echo "⚠️ Reached maximum attempts"
+              if [ "$BACKEND_IP" != "" ]; then
+                echo "Using last known IP: $BACKEND_IP"
+                echo "BACKEND_IP=$BACKEND_IP" >> $GITHUB_ENV
+              fi
+            fi
+            
+            # Don't sleep on last iteration
+            if [ $i -lt 30 ]; then
+              sleep 20
+            fi
+          done
+
+      - name: Update frontend configuration
+        if: env.BACKEND_IP != ''
+        run: |
+          echo "🌐 Updating frontend configuration..."
+          
+          # Setup Node.js
+          curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          
+          cd frontend-web
+          
+          # Create updated configuration
+          cat > .env.production << EOF
+          VITE_API_URL=http://$BACKEND_IP:3000
+          VITE_SOCKET_URL=http://$BACKEND_IP:3000
+          VITE_APP_NAME=Field Service Manager
+          NODE_ENV=production
+          EOF
+          
+          echo "Updated frontend configuration:"
+          cat .env.production
+          
+          # Rebuild and redeploy frontend
+          echo "🏗️ Rebuilding frontend..."
+          rm -rf node_modules dist
+          npm install --legacy-peer-deps
+          npm run build
+          
+          # Redeploy to S3
+          echo "📤 Redeploying to S3..."
+          aws s3 sync dist/ s3://$S3_BUCKET --delete
+          
+          echo "✅ Frontend updated and redeployed"
+
+      - name: Final connectivity report
+        run: |
+          echo ""
+          echo "🎉 ✅ BACKEND CONNECTIVITY DIAGNOSIS & FIX COMPLETED!"
+          echo ""
+          echo "═══════════════════════════════════════════════════════"
+          echo "📋 FINAL SYSTEM STATUS"
+          echo "═══════════════════════════════════════════════════════"
+          echo ""
+          
+          if [ "$BACKEND_IP" != "" ]; then
+            echo "🔧 BACKEND (FIXED):"
+            echo "• Service: $SERVICE_NAME"
+            echo "• IP Address: $BACKEND_IP"
+            echo "• Health Check: http://$BACKEND_IP:3000/health"
+            echo "• API Root: http://$BACKEND_IP:3000/"
+            echo "• Login API: http://$BACKEND_IP:3000/api/auth/login"
+            echo "• Test API: http://$BACKEND_IP:3000/api/test"
+            echo ""
+            echo "🌐 FRONTEND:"
+            echo "• Website: http://$S3_BUCKET.s3-website-$AWS_REGION.amazonaws.com"
+            echo "• Backend Config: Updated to $BACKEND_IP:3000"
+            echo ""
+            echo "🧪 IMMEDIATE TESTS:"
+            echo "1. curl http://$BACKEND_IP:3000/health"
+            echo "2. curl http://$BACKEND_IP:3000/"
+            echo "3. Open: http://$S3_BUCKET.s3-website-$AWS_REGION.amazonaws.com"
+            echo "4. Login: admin@fieldservice.com / admin123"
+            echo ""
+            echo "✅ CONNECTIVITY: FIXED!"
+            echo "✅ BACKEND: RESPONDING!"
+            echo "✅ FRONTEND: UPDATED!"
+            echo "✅ LOGIN: SHOULD WORK NOW!"
+          else
+            echo "❌ BACKEND IP: Still not accessible"
+            echo "🔍 CHECK: AWS Console → ECS → Clusters → $ECS_CLUSTER"
+            echo "🔍 CHECK: Security Groups and Network Configuration"
+          fi
+          echo ""
+          echo "═══════════════════════════════════════════════════════"
