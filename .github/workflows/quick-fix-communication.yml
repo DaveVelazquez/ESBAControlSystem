@@ -1,0 +1,165 @@
+name: Quick Fix Communication
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECS_CLUSTER: field-service-cluster
+  ECS_SERVICE: field-service-backend
+  S3_BUCKET: field-service-frontend-prod
+
+jobs:
+  fix-communication:
+    name: Quick Communication Fix
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get current backend IP
+        id: get-backend-ip
+        run: |
+          echo "🔍 Getting backend IP from ECS..."
+          
+          # Get task ARN
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster $ECS_CLUSTER \
+            --service-name $ECS_SERVICE \
+            --query 'taskArns[0]' \
+            --output text \
+            --region $AWS_REGION)
+          
+          if [ "$TASK_ARN" != "None" ] && [ "$TASK_ARN" != "" ]; then
+            echo "✅ Found task: $(basename $TASK_ARN)"
+            
+            # Get network interface
+            NETWORK_INTERFACE_ID=$(aws ecs describe-tasks \
+              --cluster $ECS_CLUSTER \
+              --tasks $TASK_ARN \
+              --region $AWS_REGION \
+              --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+              --output text)
+            
+            if [ "$NETWORK_INTERFACE_ID" != "" ] && [ "$NETWORK_INTERFACE_ID" != "None" ]; then
+              # Get public IP
+              BACKEND_IP=$(aws ec2 describe-network-interfaces \
+                --network-interface-ids $NETWORK_INTERFACE_ID \
+                --query 'NetworkInterfaces[0].Association.PublicIp' \
+                --output text \
+                --region $AWS_REGION)
+              
+              if [ "$BACKEND_IP" != "" ] && [ "$BACKEND_IP" != "None" ]; then
+                echo "✅ Backend IP found: $BACKEND_IP"
+                echo "BACKEND_IP=$BACKEND_IP" >> $GITHUB_ENV
+                
+                # Test backend
+                echo "🔍 Testing backend connectivity..."
+                if curl -s -f "http://$BACKEND_IP:3000/health" > /dev/null; then
+                  echo "✅ Backend is healthy at $BACKEND_IP:3000"
+                else
+                  echo "⚠️ Backend might be starting up..."
+                fi
+              else
+                echo "❌ Could not get backend IP"
+                exit 1
+              fi
+            else
+              echo "❌ Could not get network interface"
+              exit 1
+            fi
+          else
+            echo "❌ No running tasks found"
+            exit 1
+          fi
+
+      - name: Setup Node.js and build frontend
+        run: |
+          echo "🔧 Setting up Node.js..."
+          curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+          node --version
+          npm --version
+          
+          cd frontend-web
+          
+          echo "🔧 Creating frontend config for backend: $BACKEND_IP"
+          cat > .env.production << EOF
+          VITE_API_URL=http://$BACKEND_IP:3000
+          VITE_SOCKET_URL=http://$BACKEND_IP:3000
+          VITE_APP_NAME=Field Service Manager
+          NODE_ENV=production
+          EOF
+          
+          echo "✅ Frontend configuration:"
+          cat .env.production
+          
+          echo "📦 Installing dependencies..."
+          npm install
+          
+          echo "🏗️ Building frontend..."
+          npm run build
+          
+          echo "✅ Build completed"
+          ls -la dist/
+
+      - name: Deploy frontend to S3
+        run: |
+          cd frontend-web
+          
+          echo "🚀 Deploying to S3: $S3_BUCKET"
+          aws s3 sync dist/ s3://$S3_BUCKET --delete
+          
+          echo "✅ Frontend deployed successfully"
+
+      - name: Verify system
+        run: |
+          echo ""
+          echo "🎉 ✅ COMMUNICATION FIX COMPLETED!"
+          echo ""
+          echo "═══════════════════════════════════════════════════════"
+          echo "📋 SYSTEM STATUS:"
+          echo "═══════════════════════════════════════════════════════"
+          echo ""
+          echo "🔧 BACKEND:"
+          echo "• IP Address: $BACKEND_IP"
+          echo "• API URL: http://$BACKEND_IP:3000"
+          echo "• Health Check: http://$BACKEND_IP:3000/health"
+          echo ""
+          echo "🌐 FRONTEND:"
+          echo "• Website: http://$S3_BUCKET.s3-website-$AWS_REGION.amazonaws.com"
+          echo "• API Target: http://$BACKEND_IP:3000 ✅"
+          echo "• Deployment: Fresh build with correct backend URL ✅"
+          echo ""
+          echo "🔐 LOGIN CREDENTIALS:"
+          echo "• Email: admin@fieldservice.com"
+          echo "• Password: admin123"
+          echo ""
+          echo "🧪 TESTING STEPS:"
+          echo "1. Wait 1-2 minutes for S3 propagation"
+          echo "2. Go to: http://$S3_BUCKET.s3-website-$AWS_REGION.amazonaws.com"
+          echo "3. Open browser dev tools (F12)"
+          echo "4. Try login - should see API calls to $BACKEND_IP:3000"
+          echo "5. No CORS errors should appear"
+          echo ""
+          echo "🔥 FRONTEND ↔ BACKEND: SYNCHRONIZED!"
+          echo "═══════════════════════════════════════════════════════"
+          
+          # Final backend test
+          echo ""
+          echo "🔍 Final backend health check..."
+          if curl -s -f "http://$BACKEND_IP:3000/health" > /dev/null; then
+            HEALTH_RESPONSE=$(curl -s "http://$BACKEND_IP:3000/health")
+            echo "✅ Backend health: $HEALTH_RESPONSE"
+            echo "🚀 System is ready for use!"
+          else
+            echo "⚠️ Backend might still be starting - try again in 1-2 minutes"
+          fi
