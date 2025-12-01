@@ -1,0 +1,95 @@
+name: Redeploy Frontend with Updated Backend URL
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_ip:
+        description: 'Backend IP Address'
+        required: true
+        default: '3.231.56.27'
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: field-service-frontend-prod
+
+jobs:
+  redeploy-frontend:
+    name: Redeploy Frontend
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend-web/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update frontend environment variables
+        run: |
+          cd frontend-web
+          echo "Updating .env.production with backend IP: ${{ inputs.backend_ip }}"
+          cat > .env.production << EOF
+          # Production Environment Variables for Frontend
+          
+          # API URL - Point to backend ECS service
+          VITE_API_URL=http://${{ inputs.backend_ip }}:3000
+          
+          # Socket.IO URL - Point to backend ECS service  
+          VITE_SOCKET_URL=http://${{ inputs.backend_ip }}:3000
+          
+          # App Name
+          VITE_APP_NAME=Field Service Manager
+          
+          # Environment
+          NODE_ENV=production
+          EOF
+          echo "Updated .env.production:"
+          cat .env.production
+
+      - name: Install dependencies
+        run: |
+          cd frontend-web
+          npm ci
+
+      - name: Build frontend
+        run: |
+          cd frontend-web
+          echo "Building with environment variables:"
+          cat .env.production
+          npm run build
+          echo "Build completed, checking dist folder:"
+          ls -la dist/
+
+      - name: Deploy to S3
+        run: |
+          cd frontend-web
+          echo "Syncing dist folder to S3 bucket: $S3_BUCKET"
+          aws s3 sync dist/ s3://$S3_BUCKET --delete --cache-control max-age=86400
+          echo "Frontend deployment completed successfully!"
+
+      - name: Verify deployment
+        run: |
+          echo "🎉 Frontend redeployment completed!"
+          echo ""
+          echo "📋 DEPLOYMENT SUMMARY:"
+          echo "• Frontend URL: http://$S3_BUCKET.s3-website-$AWS_REGION.amazonaws.com"
+          echo "• Backend IP: ${{ inputs.backend_ip }}:3000"
+          echo "• API URL: http://${{ inputs.backend_ip }}:3000"
+          echo ""
+          echo "🔐 LOGIN CREDENTIALS:"
+          echo "• Email: admin@fieldservice.com"
+          echo "• Password: admin123"
+          echo ""
+          echo "✅ The frontend now points to the correct backend!"
