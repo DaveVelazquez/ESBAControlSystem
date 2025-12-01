@@ -1,0 +1,107 @@
+name: Fix Security Group for Backend
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECS_CLUSTER: field-service-cluster
+  ECS_SERVICE: backend-service
+
+jobs:
+  fix-security-group:
+    name: Update Security Group Rules
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get current security groups from ECS service
+        id: get-sg
+        run: |
+          # Get current task definition
+          TASK_DEF=$(aws ecs describe-services --cluster ${{ env.ECS_CLUSTER }} --services ${{ env.ECS_SERVICE }} --query "services[0].taskDefinition" --output text)
+          echo "Current task definition: $TASK_DEF"
+          
+          # Get VPC and current security groups
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query "Vpcs[0].VpcId" --output text)
+          echo "VPC ID: $VPC_ID"
+          echo "vpc_id=$VPC_ID" >> $GITHUB_OUTPUT
+
+      - name: Create new security group with correct rules
+        id: create-sg
+        run: |
+          # Create new security group
+          SG_ID=$(aws ec2 create-security-group \
+            --group-name "field-service-backend-sg-$(date +%s)" \
+            --description "Security group for Field Service Backend with port 3000" \
+            --vpc-id ${{ steps.get-sg.outputs.vpc_id }} \
+            --query "GroupId" --output text)
+          
+          echo "New Security Group: $SG_ID"
+          
+          # Add rules for port 3000 and SSH
+          aws ec2 authorize-security-group-ingress \
+            --group-id $SG_ID \
+            --protocol tcp \
+            --port 3000 \
+            --cidr 0.0.0.0/0
+            
+          aws ec2 authorize-security-group-ingress \
+            --group-id $SG_ID \
+            --protocol tcp \
+            --port 80 \
+            --cidr 0.0.0.0/0
+            
+          aws ec2 authorize-security-group-ingress \
+            --group-id $SG_ID \
+            --protocol tcp \
+            --port 443 \
+            --cidr 0.0.0.0/0
+          
+          echo "security_group_id=$SG_ID" >> $GITHUB_OUTPUT
+
+      - name: Update ECS service with new security group
+        run: |
+          # Get current network configuration
+          VPC_ID=${{ steps.get-sg.outputs.vpc_id }}
+          NEW_SG_ID=${{ steps.create-sg.outputs.security_group_id }}
+          
+          # Get subnets
+          SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" --query "Subnets[*].SubnetId" --output text | tr '\t' ',' | tr ' ' ',')
+          
+          echo "Updating service with new security group: $NEW_SG_ID"
+          echo "Subnets: $SUBNETS"
+          
+          # Update the service to force new deployment with new security group
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$NEW_SG_ID],assignPublicIp=ENABLED}" \
+            --force-new-deployment
+
+      - name: Wait for service to stabilize
+        run: |
+          echo "Waiting for service to stabilize with new security group..."
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }}
+
+      - name: Get new task IP
+        run: |
+          echo "Getting new task information..."
+          TASK_ARN=$(aws ecs list-tasks --cluster ${{ env.ECS_CLUSTER }} --service-name ${{ env.ECS_SERVICE }} --query "taskArns[0]" --output text)
+          
+          if [ "$TASK_ARN" != "null" ] && [ "$TASK_ARN" != "" ]; then
+            PUBLIC_IP=$(aws ecs describe-tasks --cluster ${{ env.ECS_CLUSTER }} --tasks $TASK_ARN --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" --output text | xargs -I {} aws ec2 describe-network-interfaces --network-interface-ids {} --query "NetworkInterfaces[0].Association.PublicIp" --output text)
+            echo "New Public IP: $PUBLIC_IP"
+            echo "Backend URL: http://$PUBLIC_IP:3000"
+            echo "Health Check: http://$PUBLIC_IP:3000/health"
+          else
+            echo "No tasks found or task still starting"
+          fi
