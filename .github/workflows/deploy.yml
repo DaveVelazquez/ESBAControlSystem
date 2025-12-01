@@ -62,33 +62,14 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Create ECS infrastructure
+      - name: Setup network infrastructure
         env:
           IMAGE_URI: ${{ steps.build-image.outputs.image }}
         run: |
-          # Create VPC if not exists
-          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${{ env.ECS_CLUSTER }}-vpc" --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "None")
-          if [ "$VPC_ID" = "None" ] || [ "$VPC_ID" = "null" ]; then
-            echo "Creating VPC..."
-            VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query "Vpc.VpcId" --output text)
-            aws ec2 create-tags --resources $VPC_ID --tags Key=Name,Value=${{ env.ECS_CLUSTER }}-vpc
-            
-            # Create subnets
-            SUBNET_ID_1=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/24 --availability-zone us-east-1a --query "Subnet.SubnetId" --output text)
-            SUBNET_ID_2=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.2.0/24 --availability-zone us-east-1b --query "Subnet.SubnetId" --output text)
-            aws ec2 create-tags --resources $SUBNET_ID_1 --tags Key=Name,Value=${{ env.ECS_CLUSTER }}-subnet-1
-            aws ec2 create-tags --resources $SUBNET_ID_2 --tags Key=Name,Value=${{ env.ECS_CLUSTER }}-subnet-2
-            
-            # Create internet gateway
-            IGW_ID=$(aws ec2 create-internet-gateway --query "InternetGateway.InternetGatewayId" --output text)
-            aws ec2 attach-internet-gateway --vpc-id $VPC_ID --internet-gateway-id $IGW_ID
-            
-            # Create route table
-            RT_ID=$(aws ec2 create-route-table --vpc-id $VPC_ID --query "RouteTable.RouteTableId" --output text)
-            aws ec2 create-route --route-table-id $RT_ID --destination-cidr-block 0.0.0.0/0 --gateway-id $IGW_ID
-            aws ec2 associate-route-table --subnet-id $SUBNET_ID_1 --route-table-id $RT_ID
-            aws ec2 associate-route-table --subnet-id $SUBNET_ID_2 --route-table-id $RT_ID
-          fi
+          # Use default VPC for simplicity
+          echo "Using default VPC and subnets..."
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query "Vpcs[0].VpcId" --output text)
+          echo "Default VPC ID: $VPC_ID"
           
           # Create ECS Cluster if not exists
           aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} > /dev/null 2>&1 || {
@@ -96,14 +77,15 @@ jobs:
             aws ecs create-cluster --cluster-name ${{ env.ECS_CLUSTER }}
           }
           
-          # Create security group if not exists
-          SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=${{ env.ECS_CLUSTER }}-sg" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null || echo "None")
+          # Use default security group or create minimal one
+          SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=default" "Name=vpc-id,Values=$VPC_ID" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null || echo "None")
           if [ "$SG_ID" = "None" ]; then
             echo "Creating security group..."
             SG_ID=$(aws ec2 create-security-group --group-name ${{ env.ECS_CLUSTER }}-sg --description "Security group for Field Service" --vpc-id $VPC_ID --query "GroupId" --output text)
-            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0
-            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 3000 --cidr 0.0.0.0/0
+            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0 || true
+            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 3000 --cidr 0.0.0.0/0 || true
           fi
+          echo "Using Security Group: $SG_ID"
 
       - name: Deploy or Update ECS service
         env:
@@ -119,29 +101,29 @@ jobs:
           else
             echo "Creating new ECS service and task definition..."
             # Create task definition and service (simplified version)
+            # Create log group first
+            aws logs create-log-group --log-group-name "/ecs/${{ env.ECS_SERVICE }}" --region ${{ env.AWS_REGION }} || true
+            
+            # Register task definition with minimal configuration
             aws ecs register-task-definition \
               --family ${{ env.ECS_SERVICE }} \
               --network-mode awsvpc \
               --requires-compatibilities FARGATE \
               --cpu 256 \
               --memory 512 \
-              --execution-role-arn arn:aws:iam::${{ github.repository_owner }}:role/ecsTaskExecutionRole \
               --container-definitions '[{
                 "name": "${{ env.ECS_SERVICE }}",
                 "image": "'$IMAGE_URI'",
                 "portMappings": [{"containerPort": 3000}],
-                "logConfiguration": {
-                  "logDriver": "awslogs",
-                  "options": {
-                    "awslogs-group": "/ecs/${{ env.ECS_SERVICE }}",
-                    "awslogs-region": "${{ env.AWS_REGION }}",
-                    "awslogs-stream-prefix": "ecs"
-                  }
-                }
+                "environment": [
+                  {"name": "NODE_ENV", "value": "production"},
+                  {"name": "PORT", "value": "3000"}
+                ]
               }]' || echo "Task definition creation may have failed, continuing..."
             
-            # Create service
-            SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query "Subnets[*].SubnetId" --output text | tr '\t' ',')
+            # Create service using default subnets
+            SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" "Name=default-for-az,Values=true" --query "Subnets[*].SubnetId" --output text | tr '\t' ',' | tr ' ' ',')
+            echo "Using subnets: $SUBNETS"
             aws ecs create-service \
               --cluster ${{ env.ECS_CLUSTER }} \
               --service-name ${{ env.ECS_SERVICE }} \
