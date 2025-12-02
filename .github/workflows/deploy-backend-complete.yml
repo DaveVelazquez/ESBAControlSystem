@@ -1,0 +1,631 @@
+name: Deploy Backend Complete
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 507297234735
+  ECR_REPOSITORY: field-service-backend
+  ECS_CLUSTER: field-service-cluster
+  ECS_SERVICE: field-service-backend
+  CONTAINER_NAME: backend
+
+jobs:
+  deploy:
+    name: Deploy Backend with Public Access
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create minimal backend application
+        run: |
+          echo "📦 Creando aplicación backend mínima..."
+          
+          mkdir -p minimal-backend
+          cd minimal-backend
+          
+          # Create package.json
+          cat > package.json << 'EOF'
+          {
+            "name": "field-service-backend",
+            "version": "1.0.0",
+            "main": "server.js",
+            "scripts": {
+              "start": "node server.js"
+            },
+            "dependencies": {
+              "express": "^4.18.2",
+              "cors": "^2.8.5",
+              "bcryptjs": "^2.4.3"
+            }
+          }
+          EOF
+          
+          # Create server.js with full authentication
+          cat > server.js << 'EOFSERVER'
+          const express = require('express');
+          const cors = require('cors');
+          const bcrypt = require('bcryptjs');
+          
+          const app = express();
+          const PORT = process.env.PORT || 3000;
+          
+          // CORS configuration
+          app.use(cors({
+            origin: '*',
+            methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+            allowedHeaders: ['Content-Type', 'Authorization'],
+            credentials: true
+          }));
+          
+          app.use(express.json());
+          
+          // Logging middleware
+          app.use((req, res, next) => {
+            console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+            next();
+          });
+          
+          // In-memory users database
+          const users = [
+            {
+              id: 1,
+              email: 'admin@fieldservice.com',
+              password: '$2a$10$8K1p/a0dL3LKkOsim1GELefmhbZhf9l.5E8z5S5J9d6f1h7L4zJHO', // admin123
+              name: 'Admin User',
+              role: 'admin'
+            }
+          ];
+          
+          // Health check
+          app.get('/health', (req, res) => {
+            res.status(200).json({
+              status: 'OK',
+              message: 'Backend is healthy',
+              timestamp: new Date().toISOString(),
+              uptime: process.uptime()
+            });
+          });
+          
+          // Root endpoint
+          app.get('/', (req, res) => {
+            res.json({
+              name: 'Field Service Manager API',
+              version: '1.0.0',
+              status: 'running',
+              endpoints: {
+                health: '/health',
+                login: '/api/auth/login',
+                test: '/api/test'
+              }
+            });
+          });
+          
+          // Test endpoint
+          app.get('/api/test', (req, res) => {
+            res.json({
+              message: 'Test endpoint working',
+              timestamp: new Date().toISOString()
+            });
+          });
+          
+          // Login endpoint
+          app.post('/api/auth/login', async (req, res) => {
+            try {
+              const { email, password } = req.body;
+              
+              console.log('Login attempt:', email);
+              
+              if (!email || !password) {
+                return res.status(400).json({
+                  success: false,
+                  message: 'Email and password are required'
+                });
+              }
+              
+              // Find user
+              const user = users.find(u => u.email === email);
+              
+              if (!user) {
+                return res.status(401).json({
+                  success: false,
+                  message: 'Invalid credentials'
+                });
+              }
+              
+              // Verify password
+              const isValidPassword = await bcrypt.compare(password, user.password);
+              
+              if (!isValidPassword) {
+                return res.status(401).json({
+                  success: false,
+                  message: 'Invalid credentials'
+                });
+              }
+              
+              // Generate simple token (in production, use JWT)
+              const token = Buffer.from(`${user.id}:${Date.now()}`).toString('base64');
+              
+              console.log('Login successful:', user.email);
+              
+              res.json({
+                success: true,
+                message: 'Login successful',
+                token: token,
+                user: {
+                  id: user.id,
+                  email: user.email,
+                  name: user.name,
+                  role: user.role
+                }
+              });
+            } catch (error) {
+              console.error('Login error:', error);
+              res.status(500).json({
+                success: false,
+                message: 'Internal server error'
+              });
+            }
+          });
+          
+          // Start server
+          app.listen(PORT, '0.0.0.0', () => {
+            console.log(`✅ Server running on port ${PORT}`);
+            console.log(`🌐 Health check: http://localhost:${PORT}/health`);
+            console.log(`🔐 Login endpoint: http://localhost:${PORT}/api/auth/login`);
+          });
+          EOFSERVER
+          
+          # Create Dockerfile
+          cat > Dockerfile << 'EOFDOCKER'
+          FROM node:18-alpine
+          
+          WORKDIR /app
+          
+          COPY package*.json ./
+          RUN npm install --production
+          
+          COPY server.js ./
+          
+          EXPOSE 3000
+          
+          HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+            CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"
+          
+          CMD ["npm", "start"]
+          EOFDOCKER
+          
+          echo "✅ Backend application created"
+
+      - name: Build and push Docker image
+        run: |
+          cd minimal-backend
+          
+          echo "🔐 Login to ECR..."
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          
+          # Create ECR repository if it doesn't exist
+          aws ecr describe-repositories --repository-names ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }} || \
+          aws ecr create-repository --repository-name ${{ env.ECR_REPOSITORY }} --region ${{ env.AWS_REGION }}
+          
+          echo "🏗️ Building Docker image..."
+          docker build -t ${{ env.ECR_REPOSITORY }}:latest .
+          
+          echo "🏷️ Tagging image..."
+          docker tag ${{ env.ECR_REPOSITORY }}:latest ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
+          
+          echo "⬆️ Pushing to ECR..."
+          docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
+          
+          echo "✅ Image pushed successfully"
+
+      - name: Setup ECS infrastructure
+        id: setup-ecs
+        run: |
+          echo "🏗️ Setting up ECS infrastructure..."
+          
+          # Get default VPC
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=is-default,Values=true" \
+            --query 'Vpcs[0].VpcId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "VPC ID: $VPC_ID"
+          
+          # Get subnets
+          SUBNETS=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=$VPC_ID" \
+            --query 'Subnets[*].SubnetId' \
+            --output json \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "Subnets: $SUBNETS"
+          
+          # Create Security Group with PUBLIC access
+          TIMESTAMP=$(date +%s)
+          SG_NAME="backend-public-$TIMESTAMP"
+          
+          SG_ID=$(aws ec2 create-security-group \
+            --group-name "$SG_NAME" \
+            --description "Backend Security Group - Public Access" \
+            --vpc-id $VPC_ID \
+            --region ${{ env.AWS_REGION }} \
+            --output text)
+          
+          echo "Created Security Group: $SG_ID"
+          
+          # Wait for SG to be available
+          sleep 5
+          
+          # Add ingress rules
+          echo "Adding ingress rules..."
+          
+          # Port 3000 (API)
+          aws ec2 authorize-security-group-ingress \
+            --group-id $SG_ID \
+            --protocol tcp \
+            --port 3000 \
+            --cidr 0.0.0.0/0 \
+            --region ${{ env.AWS_REGION }}
+          
+          # Port 80 (HTTP)
+          aws ec2 authorize-security-group-ingress \
+            --group-id $SG_ID \
+            --protocol tcp \
+            --port 80 \
+            --cidr 0.0.0.0/0 \
+            --region ${{ env.AWS_REGION }}
+          
+          # Port 443 (HTTPS)
+          aws ec2 authorize-security-group-ingress \
+            --group-id $SG_ID \
+            --protocol tcp \
+            --port 443 \
+            --cidr 0.0.0.0/0 \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Security Group configured"
+          
+          # Save to outputs
+          echo "VPC_ID=$VPC_ID" >> $GITHUB_OUTPUT
+          echo "SG_ID=$SG_ID" >> $GITHUB_OUTPUT
+          echo "SUBNETS=$SUBNETS" >> $GITHUB_OUTPUT
+          
+          # Format subnets for ECS
+          SUBNET_LIST=$(echo $SUBNETS | jq -r 'join(",")')
+          echo "SUBNET_LIST=$SUBNET_LIST" >> $GITHUB_OUTPUT
+
+      - name: Create ECS cluster
+        run: |
+          echo "🏗️ Creating/updating ECS cluster..."
+          
+          # Create cluster if it doesn't exist
+          aws ecs describe-clusters --clusters ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }} || \
+          aws ecs create-cluster --cluster-name ${{ env.ECS_CLUSTER }} --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Cluster ready"
+
+      - name: Create task execution role
+        id: create-role
+        run: |
+          echo "🔐 Creating task execution role..."
+          
+          ROLE_NAME="ecsTaskExecutionRole"
+          
+          # Check if role exists
+          if aws iam get-role --role-name $ROLE_NAME 2>/dev/null; then
+            echo "Role already exists"
+            ROLE_ARN=$(aws iam get-role --role-name $ROLE_NAME --query 'Role.Arn' --output text)
+          else
+            # Create trust policy
+            cat > trust-policy.json << 'EOF'
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "ecs-tasks.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }
+          EOF
+            
+            # Create role
+            ROLE_ARN=$(aws iam create-role \
+              --role-name $ROLE_NAME \
+              --assume-role-policy-document file://trust-policy.json \
+              --query 'Role.Arn' \
+              --output text)
+            
+            # Attach policy
+            aws iam attach-role-policy \
+              --role-name $ROLE_NAME \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+            
+            echo "Role created"
+          fi
+          
+          echo "ROLE_ARN=$ROLE_ARN" >> $GITHUB_OUTPUT
+          echo "Task execution role: $ROLE_ARN"
+
+      - name: Register task definition
+        id: register-task
+        run: |
+          echo "📝 Registering task definition..."
+          
+          cat > task-definition.json << EOF
+          {
+            "family": "field-service-backend",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "256",
+            "memory": "512",
+            "executionRoleArn": "${{ steps.create-role.outputs.ROLE_ARN }}",
+            "containerDefinitions": [
+              {
+                "name": "${{ env.CONTAINER_NAME }}",
+                "image": "${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest",
+                "essential": true,
+                "portMappings": [
+                  {
+                    "containerPort": 3000,
+                    "protocol": "tcp"
+                  }
+                ],
+                "environment": [
+                  {
+                    "name": "NODE_ENV",
+                    "value": "production"
+                  },
+                  {
+                    "name": "PORT",
+                    "value": "3000"
+                  }
+                ],
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "/ecs/field-service-backend",
+                    "awslogs-region": "${{ env.AWS_REGION }}",
+                    "awslogs-stream-prefix": "ecs",
+                    "awslogs-create-group": "true"
+                  }
+                },
+                "healthCheck": {
+                  "command": ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));\""],
+                  "interval": 30,
+                  "timeout": 5,
+                  "retries": 3,
+                  "startPeriod": 60
+                }
+              }
+            ]
+          }
+          EOF
+          
+          cat task-definition.json
+          
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-definition.json \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          
+          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          echo "✅ Task definition registered: $TASK_DEF_ARN"
+
+      - name: Create or update ECS service
+        run: |
+          echo "🚀 Creating/updating ECS service..."
+          
+          SUBNET_LIST="${{ steps.setup-ecs.outputs.SUBNET_LIST }}"
+          SG_ID="${{ steps.setup-ecs.outputs.SG_ID }}"
+          
+          # Check if service exists
+          if aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'services[0].status' \
+            --output text | grep -q "ACTIVE"; then
+            
+            echo "Service exists, updating..."
+            aws ecs update-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service ${{ env.ECS_SERVICE }} \
+              --task-definition ${{ steps.register-task.outputs.TASK_DEF_ARN }} \
+              --force-new-deployment \
+              --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "Service doesn't exist, creating..."
+            aws ecs create-service \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --service-name ${{ env.ECS_SERVICE }} \
+              --task-definition ${{ steps.register-task.outputs.TASK_DEF_ARN }} \
+              --desired-count 1 \
+              --launch-type FARGATE \
+              --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
+              --region ${{ env.AWS_REGION }}
+          fi
+          
+          echo "✅ Service deployed"
+
+      - name: Wait for service to stabilize
+        run: |
+          echo "⏳ Waiting for service to stabilize (this may take 2-3 minutes)..."
+          
+          for i in {1..20}; do
+            echo "Check $i/20..."
+            
+            SERVICE_STATUS=$(aws ecs describe-services \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --services ${{ env.ECS_SERVICE }} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'services[0].deployments[0].rolloutState' \
+              --output text)
+            
+            RUNNING_COUNT=$(aws ecs describe-services \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --services ${{ env.ECS_SERVICE }} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'services[0].runningCount' \
+              --output text)
+            
+            echo "Status: $SERVICE_STATUS, Running: $RUNNING_COUNT"
+            
+            if [ "$RUNNING_COUNT" = "1" ]; then
+              echo "✅ Service is running"
+              break
+            fi
+            
+            sleep 15
+          done
+
+      - name: Get backend public IP
+        id: get-ip
+        run: |
+          echo "🔍 Getting backend public IP..."
+          
+          # Wait a bit for task to register
+          sleep 10
+          
+          # Get task ARN
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${{ env.ECS_SERVICE }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskArns[0]' \
+            --output text)
+          
+          echo "Task ARN: $TASK_ARN"
+          
+          if [ "$TASK_ARN" != "None" ] && [ -n "$TASK_ARN" ]; then
+            # Get ENI ID
+            ENI_ID=$(aws ecs describe-tasks \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --tasks $TASK_ARN \
+              --region ${{ env.AWS_REGION }} \
+              --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+              --output text)
+            
+            echo "ENI ID: $ENI_ID"
+            
+            # Get public IP
+            PUBLIC_IP=$(aws ec2 describe-network-interfaces \
+              --network-interface-ids $ENI_ID \
+              --region ${{ env.AWS_REGION }} \
+              --query 'NetworkInterfaces[0].Association.PublicIp' \
+              --output text)
+            
+            echo "Public IP: $PUBLIC_IP"
+            echo "BACKEND_IP=$PUBLIC_IP" >> $GITHUB_OUTPUT
+            echo "BACKEND_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          else
+            echo "❌ No task found"
+            echo "BACKEND_IP=not-found" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Test backend connectivity
+        run: |
+          BACKEND_IP="${{ steps.get-ip.outputs.BACKEND_IP }}"
+          
+          if [ "$BACKEND_IP" = "not-found" ] || [ -z "$BACKEND_IP" ]; then
+            echo "❌ No backend IP available"
+            exit 1
+          fi
+          
+          echo "🧪 Testing backend connectivity at $BACKEND_IP..."
+          echo "Waiting 60 seconds for container to fully start..."
+          sleep 60
+          
+          # Test health endpoint
+          for i in {1..15}; do
+            echo "Test attempt $i/15..."
+            
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 "http://$BACKEND_IP:3000/health" || echo "000")
+            
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ Backend is responding!"
+              echo ""
+              echo "Health check response:"
+              curl -s "http://$BACKEND_IP:3000/health" | jq '.' || curl -s "http://$BACKEND_IP:3000/health"
+              echo ""
+              
+              # Test login endpoint
+              echo "Testing login endpoint..."
+              curl -s -X POST "http://$BACKEND_IP:3000/api/auth/login" \
+                -H "Content-Type: application/json" \
+                -d '{"email":"admin@fieldservice.com","password":"admin123"}' | jq '.' || true
+              
+              exit 0
+            fi
+            
+            echo "HTTP Code: $HTTP_CODE - Not ready yet, waiting 10 seconds..."
+            sleep 10
+          done
+          
+          echo "❌ Backend not responding after 15 attempts"
+          echo "Checking container logs..."
+          
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${{ env.ECS_SERVICE }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskArns[0]' \
+            --output text)
+          
+          if [ "$TASK_ARN" != "None" ]; then
+            aws ecs describe-tasks \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --tasks $TASK_ARN \
+              --region ${{ env.AWS_REGION }} | jq '.'
+          fi
+          
+          exit 1
+
+      - name: Display deployment summary
+        if: always()
+        run: |
+          BACKEND_IP="${{ steps.get-ip.outputs.BACKEND_IP }}"
+          SG_ID="${{ steps.setup-ecs.outputs.SG_ID }}"
+          
+          echo ""
+          echo "════════════════════════════════════════════════════════"
+          echo "✅ BACKEND DEPLOYMENT COMPLETE"
+          echo "════════════════════════════════════════════════════════"
+          echo ""
+          echo "🌐 Backend IP: $BACKEND_IP"
+          echo "🔐 Security Group: $SG_ID"
+          echo ""
+          echo "📍 Backend URLs:"
+          echo "   • Health: http://$BACKEND_IP:3000/health"
+          echo "   • API Root: http://$BACKEND_IP:3000/"
+          echo "   • Login: http://$BACKEND_IP:3000/api/auth/login"
+          echo "   • Test: http://$BACKEND_IP:3000/api/test"
+          echo ""
+          echo "🔑 Test Credentials:"
+          echo "   • Email: admin@fieldservice.com"
+          echo "   • Password: admin123"
+          echo ""
+          echo "🌐 Frontend URL:"
+          echo "   • http://field-service-frontend-prod.s3-website-us-east-1.amazonaws.com"
+          echo ""
+          echo "⚠️  NEXT STEP: Update frontend with backend URL"
+          echo "    Set VITE_API_URL=http://$BACKEND_IP:3000"
+          echo ""
+          echo "════════════════════════════════════════════════════════"
