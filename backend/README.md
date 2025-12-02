@@ -1,115 +1,51 @@
-# Backend API - Field Service System
+﻿# Field Service Manager Backend
 
-API REST para el sistema de monitoreo de técnicos en campo.
+## Quick Deploy Options
 
-## Stack
+### Option 1: Railway.app (Free)
+1. Install Railway CLI: `npm install -g @railway/cli`
+2. Login: `railway login`
+3. Deploy: `railway up`
+4. Get URL: `railway domain`
 
-- Node.js 18+
-- Express.js
-- PostgreSQL 14+ con PostGIS
-- Redis (cache)
-- JWT Authentication
-- Socket.IO (real-time)
+### Option 2: Render.com (Free)
+1. Connect GitHub repo to Render
+2. Choose "Web Service"
+3. Build command: `npm install`
+4. Start command: `node server.js`
 
-## Instalación Rápida
+### Option 3: Vercel (Free)
+1. Install Vercel CLI: `npm install -g vercel`
+2. Login: `vercel login`
+3. Deploy: `vercel`
 
+## API Endpoints
+
+- `GET /health` - Health check
+- `POST /api/auth/login` - Login endpoint
+
+## Login Credentials
+- Email: `admin@fieldservice.com`
+- Password: `admin123`
+
+## Test Login
 ```bash
-# Instalar dependencias
-npm install
-
-# Copiar variables de entorno
-cp .env.example .env
-
-# Editar .env con tus configuraciones
-
-# Ejecutar migraciones (requiere PostgreSQL corriendo)
-npm run migrate
-
-# Iniciar en desarrollo
-npm run dev
-
-# Iniciar en producción
-npm start
+curl -X POST https://your-backend-url/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@fieldservice.com","password":"admin123"}'
 ```
 
-## Variables de Entorno Requeridas
-
-Ver `.env.example` para la lista completa.
-
-Las más críticas:
-- `DATABASE_URL`: Conexión a PostgreSQL
-- `JWT_SECRET`: Secret para tokens JWT
-- `AWS_*`: Credenciales AWS para S3
-- `MAPBOX_ACCESS_TOKEN`: Token de Mapbox
-
-## Endpoints Principales
-
-### Autenticación
-- `POST /api/auth/login` - Login
-- `POST /api/auth/register` - Registro
-
-### Órdenes
-- `GET /api/orders` - Listar órdenes
-- `POST /api/orders` - Crear orden
-- `GET /api/orders/:id` - Detalle de orden
-- `POST /api/orders/assign` - Asignar orden
-
-### Técnicos
-- `GET /api/technicians` - Listar técnicos
-- `GET /api/technicians/:id/orders` - Órdenes del técnico
-
-### Check-in/out
-- `POST /api/orders/:id/checkin` - Registrar llegada
-- `POST /api/orders/:id/checkout` - Registrar salida
-
-### Evidencias
-- `POST /api/orders/:id/evidences/photo` - Subir foto
-- `POST /api/orders/:id/evidences/signature` - Guardar firma
-- `GET /api/orders/:id/evidences` - Listar evidencias
-
-### Ubicaciones
-- `POST /api/locations/ping` - Actualizar ubicación
-- `GET /api/locations/technicians` - Ubicaciones en tiempo real
-
-## Testing
-
-```bash
-npm test              # Ejecutar tests
-npm run test:watch    # Watch mode
-npm run test:coverage # Coverage report
+## Success Response
+```json
+{
+  "success": true,
+  "message": "Login successful!",
+  "token": "simple-jwt-1234567890",
+  "user": {
+    "id": 1,
+    "email": "admin@fieldservice.com", 
+    "name": "System Administrator",
+    "role": "admin"
+  }
+}
 ```
-
-## Estructura
-
-```
-backend/
-├── src/
-│   ├── config/         # Configuraciones
-│   ├── controllers/    # Controladores
-│   ├── middleware/     # Middleware (auth, errors, etc)
-│   ├── models/         # Modelos
-│   ├── routes/         # Rutas Express
-│   ├── services/       # Lógica de negocio
-│   ├── utils/          # Utilidades
-│   └── server.js       # Entry point
-├── tests/              # Tests
-├── logs/               # Logs (generados)
-├── .env.example        # Variables de entorno ejemplo
-├── Dockerfile          # Docker config
-└── package.json
-```
-
-## Socket.IO Events
-
-### Cliente emite:
-- `join-order` - Unirse a room de orden
-- `location-update` - Actualizar ubicación
-
-### Servidor emite:
-- `technician-location` - Nueva ubicación de técnico
-- `order-updated` - Orden actualizada
-- `sla-alert` - Alerta de SLA
-
-## Deployment
-
-Ver documentación en `/docs/deployment.md`

@@ -1,25 +1,15 @@
-# Backend Dockerfile
-FROM node:18-alpine
+﻿FROM node:18-alpine
 
-# Create app directory
 WORKDIR /app
 
-# Install dependencies
-COPY package*.json ./
-RUN npm install --production && npm cache clean --force
+COPY package.json ./
+RUN npm install --production
 
-# Copy app source
-COPY . .
+COPY server.js ./
 
-# Create logs directory
-RUN mkdir -p logs
-
-# Expose port
 EXPOSE 3000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost:3000/health || exit 1
 
-# Start app
-CMD ["node", "src/server.js"]
+CMD ["node", "server.js"]
