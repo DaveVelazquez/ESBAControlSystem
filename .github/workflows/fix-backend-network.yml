@@ -1,0 +1,332 @@
+name: Fix Backend Network Access
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 507297234735
+  CLUSTER_NAME: field-service-cluster
+  SERVICE_NAME: field-service-backend
+
+jobs:
+  fix-network:
+    name: Fix Backend Network Configuration
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get current ECS service configuration
+        id: get-config
+        run: |
+          echo "🔍 Obteniendo configuración actual del servicio ECS..."
+          
+          # Get service details
+          SERVICE_INFO=$(aws ecs describe-services \
+            --cluster ${{ env.CLUSTER_NAME }} \
+            --services ${{ env.SERVICE_NAME }} \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "$SERVICE_INFO" | jq '.'
+          
+          # Extract VPC config
+          TASK_DEF_ARN=$(echo "$SERVICE_INFO" | jq -r '.services[0].taskDefinition')
+          NETWORK_CONFIG=$(echo "$SERVICE_INFO" | jq -r '.services[0].networkConfiguration.awsvpcConfiguration')
+          
+          SUBNETS=$(echo "$NETWORK_CONFIG" | jq -r '.subnets | join(",")')
+          CURRENT_SG=$(echo "$NETWORK_CONFIG" | jq -r '.securityGroups[0]')
+          ASSIGN_PUBLIC_IP=$(echo "$NETWORK_CONFIG" | jq -r '.assignPublicIp')
+          
+          echo "Current Security Group: $CURRENT_SG"
+          echo "Current Subnets: $SUBNETS"
+          echo "Assign Public IP: $ASSIGN_PUBLIC_IP"
+          
+          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          echo "CURRENT_SG=$CURRENT_SG" >> $GITHUB_OUTPUT
+          echo "SUBNETS=$SUBNETS" >> $GITHUB_OUTPUT
+          echo "ASSIGN_PUBLIC_IP=$ASSIGN_PUBLIC_IP" >> $GITHUB_OUTPUT
+
+      - name: Check current security group rules
+        run: |
+          echo "🔍 Revisando reglas actuales del Security Group..."
+          
+          SG_ID="${{ steps.get-config.outputs.CURRENT_SG }}"
+          
+          if [ "$SG_ID" != "null" ] && [ -n "$SG_ID" ]; then
+            echo "Security Group ID: $SG_ID"
+            
+            # Get security group details
+            aws ec2 describe-security-groups \
+              --group-ids $SG_ID \
+              --region ${{ env.AWS_REGION }} \
+              --query 'SecurityGroups[0]' | jq '.'
+            
+            # Check ingress rules
+            INGRESS_RULES=$(aws ec2 describe-security-groups \
+              --group-ids $SG_ID \
+              --region ${{ env.AWS_REGION }} \
+              --query 'SecurityGroups[0].IpPermissions' | jq '.')
+            
+            echo "Current Ingress Rules:"
+            echo "$INGRESS_RULES" | jq '.'
+          else
+            echo "❌ No security group found"
+          fi
+
+      - name: Create new security group with public access
+        id: new-sg
+        run: |
+          echo "🔧 Creando nuevo Security Group con acceso público..."
+          
+          # Get default VPC
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=is-default,Values=true" \
+            --query 'Vpcs[0].VpcId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "Using VPC: $VPC_ID"
+          
+          # Create timestamp
+          TIMESTAMP=$(date +%s)
+          
+          # Create new security group
+          NEW_SG_ID=$(aws ec2 create-security-group \
+            --group-name "field-service-backend-public-$TIMESTAMP" \
+            --description "Backend Security Group - Public Access" \
+            --vpc-id $VPC_ID \
+            --region ${{ env.AWS_REGION }} \
+            --output text)
+          
+          echo "Created Security Group: $NEW_SG_ID"
+          
+          # Wait for SG to be available
+          sleep 5
+          
+          # Add ingress rules - Allow ALL traffic from internet (for testing)
+          echo "Adding ingress rule for port 3000 (HTTP API)..."
+          aws ec2 authorize-security-group-ingress \
+            --group-id $NEW_SG_ID \
+            --protocol tcp \
+            --port 3000 \
+            --cidr 0.0.0.0/0 \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "Adding ingress rule for port 80 (HTTP)..."
+          aws ec2 authorize-security-group-ingress \
+            --group-id $NEW_SG_ID \
+            --protocol tcp \
+            --port 80 \
+            --cidr 0.0.0.0/0 \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "Adding ingress rule for port 443 (HTTPS)..."
+          aws ec2 authorize-security-group-ingress \
+            --group-id $NEW_SG_ID \
+            --protocol tcp \
+            --port 443 \
+            --cidr 0.0.0.0/0 \
+            --region ${{ env.AWS_REGION }}
+          
+          # Add egress rule - Allow ALL outbound traffic
+          echo "Adding egress rule (allow all outbound)..."
+          aws ec2 authorize-security-group-egress \
+            --group-id $NEW_SG_ID \
+            --protocol -1 \
+            --cidr 0.0.0.0/0 \
+            --region ${{ env.AWS_REGION }} || true
+          
+          echo "NEW_SG_ID=$NEW_SG_ID" >> $GITHUB_OUTPUT
+          
+          # Show final rules
+          echo "✅ Security Group Rules:"
+          aws ec2 describe-security-groups \
+            --group-ids $NEW_SG_ID \
+            --region ${{ env.AWS_REGION }} \
+            --query 'SecurityGroups[0].IpPermissions' | jq '.'
+
+      - name: Update ECS service with new security group
+        run: |
+          echo "🔄 Actualizando servicio ECS con el nuevo Security Group..."
+          
+          NEW_SG_ID="${{ steps.new-sg.outputs.NEW_SG_ID }}"
+          SUBNETS="${{ steps.get-config.outputs.SUBNETS }}"
+          
+          # Update service network configuration
+          aws ecs update-service \
+            --cluster ${{ env.CLUSTER_NAME }} \
+            --service ${{ env.SERVICE_NAME }} \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$NEW_SG_ID],assignPublicIp=ENABLED}" \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Servicio actualizado con nuevo Security Group"
+          echo "⏳ Esperando que el servicio se estabilice..."
+          
+          # Wait for service to stabilize
+          aws ecs wait services-stable \
+            --cluster ${{ env.CLUSTER_NAME }} \
+            --services ${{ env.SERVICE_NAME }} \
+            --region ${{ env.AWS_REGION }} || true
+
+      - name: Get new backend public IP
+        id: get-ip
+        run: |
+          echo "🔍 Obteniendo nueva IP pública del backend..."
+          
+          # Get task ARN
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster ${{ env.CLUSTER_NAME }} \
+            --service-name ${{ env.SERVICE_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskArns[0]' \
+            --output text)
+          
+          echo "Task ARN: $TASK_ARN"
+          
+          if [ "$TASK_ARN" != "None" ] && [ -n "$TASK_ARN" ]; then
+            # Get ENI ID
+            ENI_ID=$(aws ecs describe-tasks \
+              --cluster ${{ env.CLUSTER_NAME }} \
+              --tasks $TASK_ARN \
+              --region ${{ env.AWS_REGION }} \
+              --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+              --output text)
+            
+            echo "ENI ID: $ENI_ID"
+            
+            # Get public IP from ENI
+            PUBLIC_IP=$(aws ec2 describe-network-interfaces \
+              --network-interface-ids $ENI_ID \
+              --region ${{ env.AWS_REGION }} \
+              --query 'NetworkInterfaces[0].Association.PublicIp' \
+              --output text)
+            
+            echo "Public IP: $PUBLIC_IP"
+            echo "BACKEND_IP=$PUBLIC_IP" >> $GITHUB_OUTPUT
+            
+            # Store in environment
+            echo "BACKEND_IP=$PUBLIC_IP" >> $GITHUB_ENV
+          else
+            echo "❌ No task found"
+            echo "BACKEND_IP=not-found" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Verify backend connectivity
+        run: |
+          BACKEND_IP="${{ steps.get-ip.outputs.BACKEND_IP }}"
+          
+          if [ "$BACKEND_IP" = "not-found" ] || [ -z "$BACKEND_IP" ]; then
+            echo "❌ No se pudo obtener la IP del backend"
+            exit 1
+          fi
+          
+          echo "🧪 Verificando conectividad del backend en $BACKEND_IP..."
+          
+          # Wait for container to start
+          echo "Esperando 30 segundos para que el contenedor inicie..."
+          sleep 30
+          
+          # Test health endpoint
+          for i in {1..10}; do
+            echo "Intento $i de 10..."
+            
+            if curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://$BACKEND_IP:3000/health" | grep -q "200"; then
+              echo "✅ Backend responde correctamente!"
+              
+              # Test all endpoints
+              echo ""
+              echo "📍 Endpoints del Backend:"
+              echo "• Health Check: http://$BACKEND_IP:3000/health"
+              echo "• API Root: http://$BACKEND_IP:3000/"
+              echo "• Login API: http://$BACKEND_IP:3000/api/auth/login"
+              echo "• Test API: http://$BACKEND_IP:3000/api/test"
+              echo ""
+              
+              echo "Respuesta del health check:"
+              curl -s "http://$BACKEND_IP:3000/health" | jq '.' || curl -s "http://$BACKEND_IP:3000/health"
+              
+              exit 0
+            fi
+            
+            echo "❌ No responde todavía, esperando 10 segundos..."
+            sleep 10
+          done
+          
+          echo "❌ Backend no responde después de múltiples intentos"
+          echo "Verificando logs del contenedor..."
+          
+          # Get container logs
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster ${{ env.CLUSTER_NAME }} \
+            --service-name ${{ env.SERVICE_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskArns[0]' \
+            --output text)
+          
+          if [ "$TASK_ARN" != "None" ]; then
+            echo "Task logs:"
+            aws ecs describe-tasks \
+              --cluster ${{ env.CLUSTER_NAME }} \
+              --tasks $TASK_ARN \
+              --region ${{ env.AWS_REGION }} | jq '.tasks[0]'
+          fi
+
+      - name: Update frontend with backend URL
+        if: steps.get-ip.outputs.BACKEND_IP != 'not-found'
+        run: |
+          BACKEND_IP="${{ steps.get-ip.outputs.BACKEND_IP }}"
+          
+          echo "📝 Actualizando configuración del frontend..."
+          
+          # Create environment configuration
+          cat > frontend-web/.env.production << EOF
+          VITE_API_URL=http://$BACKEND_IP:3000
+          VITE_SOCKET_URL=http://$BACKEND_IP:3000
+          VITE_MAPBOX_TOKEN=pk.eyJ1IjoiZmllbGRzZXJ2aWNlIiwiYSI6ImNsOXh5emF6YTA2M3Mzb283eG5wYWN1bWoifQ.mocktoken123
+          EOF
+          
+          cat frontend-web/.env.production
+          
+          echo "✅ Configuración del frontend actualizada"
+
+      - name: Display final configuration
+        if: steps.get-ip.outputs.BACKEND_IP != 'not-found'
+        run: |
+          BACKEND_IP="${{ steps.get-ip.outputs.BACKEND_IP }}"
+          NEW_SG_ID="${{ steps.new-sg.outputs.NEW_SG_ID }}"
+          
+          echo ""
+          echo "════════════════════════════════════════════════════════"
+          echo "✅ CONFIGURACIÓN DE RED ACTUALIZADA"
+          echo "════════════════════════════════════════════════════════"
+          echo ""
+          echo "🔐 Security Group: $NEW_SG_ID"
+          echo "🌐 Backend IP: $BACKEND_IP"
+          echo ""
+          echo "📍 URLs del Backend:"
+          echo "   • Health: http://$BACKEND_IP:3000/health"
+          echo "   • API: http://$BACKEND_IP:3000/"
+          echo "   • Login: http://$BACKEND_IP:3000/api/auth/login"
+          echo ""
+          echo "🌐 Frontend URL:"
+          echo "   • http://field-service-frontend-prod.s3-website-us-east-1.amazonaws.com"
+          echo ""
+          echo "🔑 Credenciales de prueba:"
+          echo "   • Email: admin@fieldservice.com"
+          echo "   • Password: admin123"
+          echo ""
+          echo "════════════════════════════════════════════════════════"
+          echo ""
+          echo "⚠️ IMPORTANTE: El frontend necesita ser redesplegado con la nueva IP del backend"
+          echo "   Ejecuta el workflow 'Deploy Frontend' después de este."
+          echo ""
