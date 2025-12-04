@@ -261,6 +261,7 @@ jobs:
             --description "Backend Security Group - Public Access" \
             --vpc-id $VPC_ID \
             --region ${{ env.AWS_REGION }} \
+            --query 'GroupId' \
             --output text)
           
           echo "Created Security Group: $SG_ID"
