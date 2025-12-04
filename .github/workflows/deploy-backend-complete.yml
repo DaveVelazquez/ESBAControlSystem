@@ -298,10 +298,11 @@ jobs:
           
           echo "✅ Security Group configured"
           
-          # Format subnets for ECS
+          # Format subnets for ECS (comma-separated list)
           SUBNET_LIST=$(echo $SUBNETS | jq -r 'join(",")')
+          echo "Formatted subnet list: $SUBNET_LIST"
           
-          # Save to outputs
+          # Save to outputs (only save formatted strings, NOT JSON arrays)
           echo "VPC_ID=$VPC_ID" >> $GITHUB_OUTPUT
           echo "SG_ID=$SG_ID" >> $GITHUB_OUTPUT
           echo "SUBNET_LIST=$SUBNET_LIST" >> $GITHUB_OUTPUT
