@@ -298,13 +298,12 @@ jobs:
           
           echo "✅ Security Group configured"
           
+          # Format subnets for ECS
+          SUBNET_LIST=$(echo $SUBNETS | jq -r 'join(",")')
+          
           # Save to outputs
           echo "VPC_ID=$VPC_ID" >> $GITHUB_OUTPUT
           echo "SG_ID=$SG_ID" >> $GITHUB_OUTPUT
-          echo "SUBNETS=$SUBNETS" >> $GITHUB_OUTPUT
-          
-          # Format subnets for ECS
-          SUBNET_LIST=$(echo $SUBNETS | jq -r 'join(",")')
           echo "SUBNET_LIST=$SUBNET_LIST" >> $GITHUB_OUTPUT
 
       - name: Create ECS cluster
