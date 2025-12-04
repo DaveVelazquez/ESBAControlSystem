@@ -36,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd frontend-web
-          npm ci
+          npm install
 
       - name: Create production environment file
         run: |
