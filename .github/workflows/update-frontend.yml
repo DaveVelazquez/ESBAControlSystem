@@ -1,0 +1,46 @@
+name: Update Frontend
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  DIST_ID: E39DRMHTE93Z9D
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Build Frontend
+        working-directory: frontend-web
+        run: |
+          npm ci
+          npm run build
+      
+      - name: Deploy to S3
+        working-directory: frontend-web
+        run: |
+          aws s3 sync dist/ s3://field-service-frontend-prod --delete
+      
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation --distribution-id ${{ env.DIST_ID }} --paths "/*"
+      
+      - name: Results
+        run: |
+          echo "✅ Frontend deployed"
+          echo "URL: https://d2rzil66ax3kqq.cloudfront.net"
