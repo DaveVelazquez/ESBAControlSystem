@@ -522,33 +522,51 @@ jobs:
           SUBNET_LIST="${{ steps.setup-ecs.outputs.SUBNET_LIST }}"
           SG_ID="${{ steps.setup-ecs.outputs.SG_ID }}"
           
+          echo "Using Subnets: $SUBNET_LIST"
+          echo "Using Security Group: $SG_ID"
+          
           # Check if service exists
-          if aws ecs describe-services \
+          SERVICE_STATUS=$(aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services ${{ env.ECS_SERVICE }} \
             --region ${{ env.AWS_REGION }} \
             --query 'services[0].status' \
-            --output text | grep -q "ACTIVE"; then
+            --output text 2>/dev/null || echo "None")
+          
+          if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
+            echo "Service exists, deleting for clean recreation..."
             
-            echo "Service exists, updating..."
+            # Scale down to 0
             aws ecs update-service \
               --cluster ${{ env.ECS_CLUSTER }} \
               --service ${{ env.ECS_SERVICE }} \
-              --task-definition ${{ steps.register-task.outputs.TASK_DEF_ARN }} \
-              --force-new-deployment \
-              --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
+              --desired-count 0 \
               --region ${{ env.AWS_REGION }}
-          else
-            echo "Service doesn't exist, creating..."
-            aws ecs create-service \
+            
+            # Wait for tasks to stop
+            echo "Waiting for tasks to stop..."
+            sleep 30
+            
+            # Delete service
+            aws ecs delete-service \
               --cluster ${{ env.ECS_CLUSTER }} \
-              --service-name ${{ env.ECS_SERVICE }} \
-              --task-definition ${{ steps.register-task.outputs.TASK_DEF_ARN }} \
-              --desired-count 1 \
-              --launch-type FARGATE \
-              --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
+              --service ${{ env.ECS_SERVICE }} \
+              --force \
               --region ${{ env.AWS_REGION }}
+            
+            echo "Service deleted, waiting for cleanup..."
+            sleep 30
           fi
+          
+          echo "Creating new service with correct network configuration..."
+          aws ecs create-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${{ env.ECS_SERVICE }} \
+            --task-definition ${{ steps.register-task.outputs.TASK_DEF_ARN }} \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[$SG_ID],assignPublicIp=ENABLED}" \
+            --region ${{ env.AWS_REGION }}
           
           echo "✅ Service deployed"
 
