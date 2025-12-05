@@ -210,6 +210,9 @@ jobs:
       - name: Get ECS Service Configuration
         id: ecs-config
         run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔧 VERSION: be4f29b-fixed"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Getting ECS service configuration..."
           
           # Check if service exists
@@ -247,31 +250,25 @@ jobs:
             echo "Service doesn't exist, using defaults..."
             
             # Get latest task definition
-            echo "DEBUG: Getting task definition..."
             TASK_DEF=$(aws ecs list-task-definitions \
               --family-prefix field-service-backend \
               --sort DESC \
               --max-items 1 \
               --query 'taskDefinitionArns[0]' \
               --output text)
-            echo "DEBUG: Task definition retrieved"
             
-            # Get all subnets from VPC - use text output with join
-            echo "DEBUG: Getting subnets..."
+            # Get all subnets from VPC
             VPC_ID="${{ steps.vpc.outputs.VPC_ID }}"
             SUBNET_LIST=$(aws ec2 describe-subnets \
               --filters "Name=vpc-id,Values=$VPC_ID" \
               --query 'join(`,`, Subnets[*].SubnetId)' \
               --output text)
-            echo "DEBUG: Subnets retrieved"
             
             # Get backend security group
-            echo "DEBUG: Getting security group..."
             SG=$(aws ec2 describe-security-groups \
               --filters "Name=group-name,Values=field-service-backend-sg" \
               --query 'SecurityGroups[0].GroupId' \
               --output text)
-            echo "DEBUG: Security group retrieved"
             
             SERVICE_FLAG="false"
           fi
