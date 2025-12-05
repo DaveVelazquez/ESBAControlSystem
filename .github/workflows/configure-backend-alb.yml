@@ -211,7 +211,7 @@ jobs:
         id: ecs-config
         run: |
           set -e
-          exec 2>/dev/null  # Suppress all stderr
+          exec 2>/dev/null
           echo "Getting ECS service configuration..."
           
           # Check if service exists
@@ -224,7 +224,6 @@ jobs:
           echo "Service status: $SERVICE_STATUS"
           
           if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
-            # Get config from existing service
             TASK_DEF=$(aws ecs describe-services \
               --cluster ${{ env.ECS_CLUSTER }} \
               --services ${{ env.ECS_SERVICE }} \
@@ -245,7 +244,6 @@ jobs:
             
             SERVICE_FLAG="true"
           else
-            # Use defaults
             TASK_DEF=$(aws ecs list-task-definitions \
               --family-prefix field-service-backend \
               --sort DESC \
@@ -267,33 +265,36 @@ jobs:
             SERVICE_FLAG="false"
           fi
           
-          # Display values
-          echo "Task Definition: $TASK_DEF"
-          echo "Security Group: $SG"
-          echo "Subnet List: $SUBNET_LIST"
-          exec 2>&1  # Restore stderr for error messages
+          exec 2>&1
           
-          # Validate
+          # Validate BEFORE displaying
           if [ -z "$TASK_DEF" ] || [ "$TASK_DEF" = "None" ]; then
-            echo "ERROR: Invalid TASK_DEF value"
+            echo "ERROR: Invalid TASK_DEF='$TASK_DEF'"
             exit 1
           fi
           
           if [ -z "$SUBNET_LIST" ] || [ "$SUBNET_LIST" = "None" ]; then
-            echo "ERROR: Invalid SUBNET_LIST value"
+            echo "ERROR: Invalid SUBNET_LIST='$SUBNET_LIST'"
             exit 1
           fi
           
           if [ -z "$SG" ] || [ "$SG" = "None" ]; then
-            echo "ERROR: Invalid SG value"
+            echo "ERROR: Invalid SG='$SG'"
             exit 1
           fi
           
-          # Write to GitHub Output
-          echo "SERVICE_EXISTS=$SERVICE_FLAG" >> "$GITHUB_OUTPUT"
-          echo "TASK_DEF=$TASK_DEF" >> "$GITHUB_OUTPUT"
-          echo "SUBNET_LIST=$SUBNET_LIST" >> "$GITHUB_OUTPUT"
-          echo "SG=$SG" >> "$GITHUB_OUTPUT"
+          # Display values
+          echo "Task Definition: $TASK_DEF"
+          echo "Security Group: $SG"
+          echo "Subnet List: $SUBNET_LIST"
+          
+          # Write outputs with explicit newlines
+          {
+            echo "SERVICE_EXISTS=$SERVICE_FLAG"
+            echo "TASK_DEF=$TASK_DEF"
+            echo "SUBNET_LIST=$SUBNET_LIST"
+            echo "SG=$SG"
+          } >> "$GITHUB_OUTPUT"
           
           echo "✅ Configuration saved"
 
