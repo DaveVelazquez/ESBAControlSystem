@@ -211,6 +211,7 @@ jobs:
         id: ecs-config
         run: |
           set -e
+          exec 2>/dev/null  # Suppress all stderr
           echo "Getting ECS service configuration..."
           
           # Check if service exists
@@ -218,7 +219,7 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER }} \
             --services ${{ env.ECS_SERVICE }} \
             --query 'services[0].status' \
-            --output text 2>/dev/null || echo "NONE")
+            --output text || echo "NONE")
           
           echo "Service status: $SERVICE_STATUS"
           
@@ -270,6 +271,7 @@ jobs:
           echo "Task Definition: $TASK_DEF"
           echo "Security Group: $SG"
           echo "Subnet List: $SUBNET_LIST"
+          exec 2>&1  # Restore stderr for error messages
           
           # Validate
           if [ -z "$TASK_DEF" ] || [ "$TASK_DEF" = "None" ]; then
