@@ -271,19 +271,39 @@ jobs:
           fi
           
           # Convert subnets array to comma-separated string
-          SUBNET_LIST=$(echo "$SUBNETS" | jq -r 'join(",")')
+          if [ -n "$SUBNETS" ] && [ "$SUBNETS" != "null" ]; then
+            SUBNET_LIST=$(echo "$SUBNETS" | jq -r 'join(",")' 2>/dev/null || echo "")
+          else
+            SUBNET_LIST=""
+          fi
           
           echo "Task: $TASK_DEF"
           echo "Subnets: $SUBNET_LIST"
           echo "SG: $SG"
           
-          # Save all outputs at once
-          {
-            echo "SERVICE_EXISTS=$SERVICE_FLAG"
-            echo "TASK_DEF=$TASK_DEF"
-            echo "SUBNET_LIST=$SUBNET_LIST"
-            echo "SG=$SG"
-          } >> $GITHUB_OUTPUT
+          # Validate all required values
+          if [ -z "$TASK_DEF" ] || [ "$TASK_DEF" = "None" ]; then
+            echo "Error: Invalid TASK_DEF"
+            exit 1
+          fi
+          
+          if [ -z "$SUBNET_LIST" ]; then
+            echo "Error: Invalid SUBNET_LIST"
+            exit 1
+          fi
+          
+          if [ -z "$SG" ] || [ "$SG" = "None" ]; then
+            echo "Error: Invalid SG"
+            exit 1
+          fi
+          
+          # Save outputs
+          cat >> $GITHUB_OUTPUT << EOF
+          SERVICE_EXISTS=$SERVICE_FLAG
+          TASK_DEF=$TASK_DEF
+          SUBNET_LIST=$SUBNET_LIST
+          SG=$SG
+          EOF
 
       - name: Delete Existing Service
         if: steps.ecs-config.outputs.SERVICE_EXISTS == 'true'
