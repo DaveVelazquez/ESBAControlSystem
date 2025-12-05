@@ -1,0 +1,95 @@
+name: Deploy Backend
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: field-service-backend
+  CLUSTER: field-service-cluster
+  SERVICE: field-service-backend
+  TASK_FAMILY: field-service-backend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin 507297234735.dkr.ecr.$AWS_REGION.amazonaws.com
+      
+      - name: Build and Push Docker Image
+        run: |
+          cd backend
+          IMAGE_TAG=$(date +%Y%m%d-%H%M%S)
+          IMAGE_URI=507297234735.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG
+          
+          docker build -t $ECR_REPO:$IMAGE_TAG .
+          docker tag $ECR_REPO:$IMAGE_TAG $IMAGE_URI
+          docker tag $ECR_REPO:$IMAGE_TAG 507297234735.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest
+          
+          docker push $IMAGE_URI
+          docker push 507297234735.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest
+          
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_ENV
+          echo "✅ Image pushed: $IMAGE_URI"
+      
+      - name: Get Current Task Definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition $TASK_FAMILY \
+            --query 'taskDefinition' > task-def.json
+          
+          # Remove fields that can't be used in register
+          cat task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > task-def-clean.json
+      
+      - name: Update Task Definition with New Image
+        run: |
+          jq --arg IMAGE "$image_uri" '.containerDefinitions[0].image = $IMAGE' task-def-clean.json > task-def-new.json
+          
+          echo "📄 New task definition:"
+          cat task-def-new.json | jq '.containerDefinitions[0].image'
+      
+      - name: Register New Task Definition
+        run: |
+          NEW_TASK_DEF=$(aws ecs register-task-definition --cli-input-json file://task-def-new.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          
+          echo "task_def_arn=$NEW_TASK_DEF" >> $GITHUB_ENV
+          echo "✅ New task definition: $NEW_TASK_DEF"
+      
+      - name: Update ECS Service
+        run: |
+          aws ecs update-service \
+            --cluster $CLUSTER \
+            --service $SERVICE \
+            --task-definition $task_def_arn \
+            --force-new-deployment
+          
+          echo "✅ Service update initiated"
+      
+      - name: Wait for Deployment
+        run: |
+          echo "⏳ Waiting for deployment to complete..."
+          aws ecs wait services-stable --cluster $CLUSTER --services $SERVICE
+          echo "✅ Deployment completed"
+      
+      - name: Get ALB URL
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names fs-alb --query 'LoadBalancers[0].DNSName' --output text)
+          
+          echo "✅ Backend deployed successfully!"
+          echo ""
+          echo "Backend URL: http://$ALB_DNS"
+          echo "API URL: http://$ALB_DNS/api"
+          echo ""
+          echo "Test clients endpoint:"
+          echo "curl http://$ALB_DNS/api/clients"
