@@ -10,6 +10,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: 507297234735
   ECR_REPOSITORY: field-service-backend
 
 jobs:
@@ -27,18 +28,18 @@ jobs:
       
       - name: Login to ECR
         run: |
-          aws ecr get-login-password --region $AWS_REGION | \
-            docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+            docker login --username AWS --password-stdin ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
       
       - name: Get Backend Image
         id: image
         run: |
           IMAGE_URI=$(aws ecr describe-images \
-            --repository-name $ECR_REPOSITORY \
+            --repository-name ${{ env.ECR_REPOSITORY }} \
             --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
             --output text)
           
-          FULL_IMAGE="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_URI"
+          FULL_IMAGE="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_URI"
           echo "image=$FULL_IMAGE" >> $GITHUB_OUTPUT
           echo "✅ Using image: $FULL_IMAGE"
       
