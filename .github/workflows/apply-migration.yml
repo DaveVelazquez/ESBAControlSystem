@@ -17,24 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Get RDS Endpoint
-        id: rds
-        run: |
-          # Get RDS instance endpoint
-          ENDPOINT=$(aws rds describe-db-instances \
-            --query 'DBInstances[?DBInstanceIdentifier==`field-service-db`].Endpoint.Address' \
-            --output text)
-          
-          echo "endpoint=$ENDPOINT" >> $GITHUB_OUTPUT
-          echo "✅ RDS Endpoint: $ENDPOINT"
-      
       - name: Install PostgreSQL Client
         run: |
           sudo apt-get update
@@ -42,7 +24,7 @@ jobs:
       
       - name: Apply Migration
         env:
-          PGHOST: ${{ steps.rds.outputs.endpoint }}
+          PGHOST: ${{ secrets.DB_HOST }}
           PGPORT: 5432
           PGDATABASE: ${{ secrets.DB_NAME }}
           PGUSER: ${{ secrets.DB_USER }}
@@ -62,7 +44,7 @@ jobs:
       
       - name: Verify Tables
         env:
-          PGHOST: ${{ steps.rds.outputs.endpoint }}
+          PGHOST: ${{ secrets.DB_HOST }}
           PGPORT: 5432
           PGDATABASE: ${{ secrets.DB_NAME }}
           PGUSER: ${{ secrets.DB_USER }}
