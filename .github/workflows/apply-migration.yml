@@ -72,13 +72,32 @@ jobs:
           echo "📄 Migration file: $MIGRATION_FILE"
           echo "🔗 Connecting to: ${DB_HOST}:${DB_PORT}/${DB_NAME}"
           echo ""
-          echo "🚀 Executing migration in Docker container..."
+          echo "🚀 Executing migration..."
           
+          # Read migration file and execute via Node.js with pg
           docker run --rm \
             -e DATABASE_URL="$DATABASE_URL" \
             -v $(pwd)/backend/migrations:/migrations:ro \
             ${{ steps.image.outputs.image }} \
-            sh -c "apt-get update -qq && apt-get install -y -qq postgresql-client && psql \$DATABASE_URL -f /migrations/${{ github.event.inputs.migration_file }}"
+            node -e "
+              const { Client } = require('pg');
+              const fs = require('fs');
+              
+              (async () => {
+                const client = new Client({ connectionString: process.env.DATABASE_URL });
+                await client.connect();
+                
+                const sql = fs.readFileSync('/migrations/${{ github.event.inputs.migration_file }}', 'utf8');
+                console.log('Executing migration...');
+                await client.query(sql);
+                console.log('✅ Migration completed');
+                
+                await client.end();
+              })().catch(err => {
+                console.error('❌ Error:', err.message);
+                process.exit(1);
+              });
+            "
           
           echo ""
           echo "✅ Migration applied successfully"
@@ -97,7 +116,31 @@ jobs:
           docker run --rm \
             -e DATABASE_URL="$DATABASE_URL" \
             ${{ steps.image.outputs.image }} \
-            sh -c "apt-get update -qq && apt-get install -y -qq postgresql-client && psql \$DATABASE_URL -c '\\dt'"
+            node -e "
+              const { Client } = require('pg');
+              
+              (async () => {
+                const client = new Client({ connectionString: process.env.DATABASE_URL });
+                await client.connect();
+                
+                const result = await client.query(\`
+                  SELECT table_name 
+                  FROM information_schema.tables 
+                  WHERE table_schema = 'public' 
+                  ORDER BY table_name;
+                \`);
+                
+                console.log('\\n📊 Database Tables:');
+                console.log('===================');
+                result.rows.forEach(row => console.log('  - ' + row.table_name));
+                console.log('');
+                
+                await client.end();
+              })().catch(err => {
+                console.error('❌ Error:', err.message);
+                process.exit(1);
+              });
+            "
       
       - name: Results
         run: |
