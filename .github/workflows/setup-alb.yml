@@ -147,6 +147,8 @@ jobs:
       - name: Get ECS Configuration
         id: ecs
         run: |
+          set -euo pipefail
+          
           TASK_DEF=$(aws ecs list-task-definitions \
             --family-prefix field-service-backend \
             --sort DESC \
@@ -188,10 +190,22 @@ jobs:
           echo "Subnets: $SUBNETS"
           echo "SG: $SG"
           
-          # Write outputs
-          echo "task_def=$TASK_DEF" >> $GITHUB_OUTPUT
-          echo "subnets=$SUBNETS" >> $GITHUB_OUTPUT
-          echo "security_group=$SG" >> $GITHUB_OUTPUT
+          # Write to temp file first, then copy to GITHUB_OUTPUT
+          TEMP_FILE=$(mktemp)
+          cat > "$TEMP_FILE" << 'ENDOFOUTPUT'
+task_def=$TASK_DEF
+subnets=$SUBNETS
+security_group=$SG
+ENDOFOUTPUT
+          
+          # Replace variables
+          sed -i "s|\$TASK_DEF|$TASK_DEF|g" "$TEMP_FILE"
+          sed -i "s|\$SUBNETS|$SUBNETS|g" "$TEMP_FILE"
+          sed -i "s|\$SG|$SG|g" "$TEMP_FILE"
+          
+          # Copy to GITHUB_OUTPUT
+          cat "$TEMP_FILE" >> $GITHUB_OUTPUT
+          rm "$TEMP_FILE"
 
       - name: Check Existing Service
         id: check
