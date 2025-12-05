@@ -19,33 +19,74 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       
-      - name: Request ACM Certificate
+      - name: Create Self-Signed Certificate
         id: cert
         run: |
-          # Solicitar certificado para el dominio del ALB
-          ALB_DNS=$(aws elbv2 describe-load-balancers --names $ALB_NAME --query 'LoadBalancers[0].DNSName' --output text)
-          echo "ALB DNS: $ALB_DNS"
+          echo "Creando certificado autofirmado para testing..."
           
-          # Nota: ACM requiere un dominio real. Para testing, usaremos certificado autofirmado
-          echo "⚠️ ACM requiere dominio verificado. Continuando sin HTTPS listener..."
-          echo "Para HTTPS necesitas:"
-          echo "1. Un dominio registrado (ej: tudominio.com)"
-          echo "2. Verificar el dominio en ACM"
-          echo "3. Crear listener HTTPS con el certificado"
+          # Generar clave privada y certificado
+          openssl req -x509 -newkey rsa:4096 -nodes -sha256 -days 365 \
+            -keyout private-key.pem \
+            -out certificate.pem \
+            -subj "/C=US/ST=State/L=City/O=Organization/CN=*.elb.amazonaws.com"
           
-          echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
+          # Importar a ACM
+          CERT_ARN=$(aws acm import-certificate \
+            --certificate fileb://certificate.pem \
+            --private-key fileb://private-key.pem \
+            --region $AWS_REGION \
+            --query 'CertificateArn' \
+            --output text)
+          
+          echo "✅ Certificado importado: $CERT_ARN"
+          echo "cert_arn=$CERT_ARN" >> $GITHUB_OUTPUT
+      
+      - name: Add HTTPS Listener to ALB
+        run: |
+          # Obtener ARN del ALB y Target Group
+          ALB_ARN=$(aws elbv2 describe-load-balancers --names $ALB_NAME --query 'LoadBalancers[0].LoadBalancerArn' --output text)
+          TG_ARN=$(aws elbv2 describe-target-groups --names $TG_NAME --query 'TargetGroups[0].TargetGroupArn' --output text)
+          
+          echo "ALB ARN: $ALB_ARN"
+          echo "TG ARN: $TG_ARN"
+          echo "Cert ARN: ${{ steps.cert.outputs.cert_arn }}"
+          
+          # Crear listener HTTPS:443
+          aws elbv2 create-listener \
+            --load-balancer-arn $ALB_ARN \
+            --protocol HTTPS \
+            --port 443 \
+            --certificates CertificateArn=${{ steps.cert.outputs.cert_arn }} \
+            --default-actions Type=forward,TargetGroupArn=$TG_ARN \
+            --ssl-policy ELBSecurityPolicy-TLS13-1-2-2021-06
+          
+          echo "✅ Listener HTTPS:443 creado"
+      
+      - name: Update Security Group
+        run: |
+          # Obtener security group del ALB
+          SG_ID=$(aws elbv2 describe-load-balancers --names $ALB_NAME --query 'LoadBalancers[0].SecurityGroups[0]' --output text)
+          
+          echo "Security Group: $SG_ID"
+          
+          # Agregar regla para HTTPS:443
+          aws ec2 authorize-security-group-ingress \
+            --group-id $SG_ID \
+            --protocol tcp \
+            --port 443 \
+            --cidr 0.0.0.0/0 2>/dev/null || echo "Regla ya existe"
+          
+          echo "✅ Security group actualizado"
       
       - name: Results
         run: |
-          echo "⚠️ HTTPS requiere dominio verificado"
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names $ALB_NAME --query 'LoadBalancers[0].DNSName' --output text)
+          
+          echo "✅ HTTPS configurado en ALB"
           echo ""
-          echo "OPCIÓN 1 - Usar HTTP (actual):"
-          echo "  Frontend: http://field-service-frontend-prod.s3-website-us-east-1.amazonaws.com"
-          echo "  Backend: http://${{ steps.cert.outputs.alb_dns }}"
+          echo "URLs disponibles:"
+          echo "  HTTP:  http://$ALB_DNS"
+          echo "  HTTPS: https://$ALB_DNS"
           echo ""
-          echo "OPCIÓN 2 - Configurar dominio propio:"
-          echo "  1. Registrar dominio en Route53"
-          echo "  2. Solicitar certificado SSL en ACM"
-          echo "  3. Verificar dominio"
-          echo "  4. Crear listener HTTPS:443 en ALB"
-          echo "  5. Actualizar CloudFront para usar dominio"
+          echo "⚠️ Nota: Certificado autofirmado - el navegador mostrará advertencia de seguridad"
+          echo "Para producción, usa un dominio real y certificado de ACM"
