@@ -1,0 +1,352 @@
+name: Setup Backend with HTTPS (ALB)
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECS_CLUSTER: field-service-cluster
+  ECS_SERVICE: field-service-backend
+
+jobs:
+  setup-alb:
+    name: Configure Application Load Balancer
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get VPC and Subnets
+        id: get-vpc
+        run: |
+          echo "🔍 Getting VPC information..."
+          
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=is-default,Values=true" \
+            --query 'Vpcs[0].VpcId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "VPC_ID=$VPC_ID" >> $GITHUB_OUTPUT
+          echo "VPC ID: $VPC_ID"
+          
+          # Get all subnets
+          SUBNETS=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=$VPC_ID" \
+            --query 'Subnets[*].SubnetId' \
+            --output json \
+            --region ${{ env.AWS_REGION }})
+          
+          # At least 2 subnets are required for ALB
+          SUBNET_1=$(echo $SUBNETS | jq -r '.[0]')
+          SUBNET_2=$(echo $SUBNETS | jq -r '.[1]')
+          
+          echo "SUBNET_1=$SUBNET_1" >> $GITHUB_OUTPUT
+          echo "SUBNET_2=$SUBNET_2" >> $GITHUB_OUTPUT
+          
+          echo "Subnets: $SUBNET_1, $SUBNET_2"
+
+      - name: Create ALB Security Group
+        id: create-alb-sg
+        run: |
+          echo "🔒 Creating ALB Security Group..."
+          
+          VPC_ID="${{ steps.get-vpc.outputs.VPC_ID }}"
+          
+          # Check if SG exists
+          ALB_SG_ID=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=field-service-alb-sg" "Name=vpc-id,Values=$VPC_ID" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          if [ "$ALB_SG_ID" = "None" ] || [ -z "$ALB_SG_ID" ]; then
+            echo "Creating new ALB Security Group..."
+            ALB_SG_ID=$(aws ec2 create-security-group \
+              --group-name "field-service-alb-sg" \
+              --description "Security Group for Field Service ALB" \
+              --vpc-id $VPC_ID \
+              --region ${{ env.AWS_REGION }} \
+              --query 'GroupId' \
+              --output text)
+            
+            # Allow HTTP (port 80)
+            aws ec2 authorize-security-group-ingress \
+              --group-id $ALB_SG_ID \
+              --protocol tcp \
+              --port 80 \
+              --cidr 0.0.0.0/0 \
+              --region ${{ env.AWS_REGION }}
+            
+            # Allow HTTPS (port 443)
+            aws ec2 authorize-security-group-ingress \
+              --group-id $ALB_SG_ID \
+              --protocol tcp \
+              --port 443 \
+              --cidr 0.0.0.0/0 \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "Created ALB SG: $ALB_SG_ID"
+          else
+            echo "Using existing ALB SG: $ALB_SG_ID"
+          fi
+          
+          echo "ALB_SG_ID=$ALB_SG_ID" >> $GITHUB_OUTPUT
+
+      - name: Update Backend Security Group
+        run: |
+          echo "🔒 Updating Backend Security Group to allow ALB traffic..."
+          
+          ALB_SG_ID="${{ steps.create-alb-sg.outputs.ALB_SG_ID }}"
+          
+          # Get backend security group
+          BACKEND_SG_ID=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=field-service-backend-sg" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "Backend SG: $BACKEND_SG_ID"
+          
+          # Allow traffic from ALB to backend on port 3000
+          aws ec2 authorize-security-group-ingress \
+            --group-id $BACKEND_SG_ID \
+            --protocol tcp \
+            --port 3000 \
+            --source-group $ALB_SG_ID \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Rule already exists"
+          
+          echo "✅ Backend SG updated"
+
+      - name: Create Application Load Balancer
+        id: create-alb
+        run: |
+          echo "⚖️ Creating Application Load Balancer..."
+          
+          SUBNET_1="${{ steps.get-vpc.outputs.SUBNET_1 }}"
+          SUBNET_2="${{ steps.get-vpc.outputs.SUBNET_2 }}"
+          ALB_SG_ID="${{ steps.create-alb-sg.outputs.ALB_SG_ID }}"
+          
+          # Check if ALB exists
+          ALB_ARN=$(aws elbv2 describe-load-balancers \
+            --names field-service-alb \
+            --query 'LoadBalancers[0].LoadBalancerArn' \
+            --output text \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "None")
+          
+          if [ "$ALB_ARN" = "None" ] || [ -z "$ALB_ARN" ]; then
+            echo "Creating new ALB..."
+            ALB_ARN=$(aws elbv2 create-load-balancer \
+              --name field-service-alb \
+              --subnets $SUBNET_1 $SUBNET_2 \
+              --security-groups $ALB_SG_ID \
+              --scheme internet-facing \
+              --type application \
+              --ip-address-type ipv4 \
+              --region ${{ env.AWS_REGION }} \
+              --query 'LoadBalancers[0].LoadBalancerArn' \
+              --output text)
+            
+            echo "Created ALB: $ALB_ARN"
+          else
+            echo "Using existing ALB: $ALB_ARN"
+          fi
+          
+          echo "ALB_ARN=$ALB_ARN" >> $GITHUB_OUTPUT
+          
+          # Get ALB DNS name
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --load-balancer-arns $ALB_ARN \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "ALB_DNS=$ALB_DNS" >> $GITHUB_OUTPUT
+          echo "ALB DNS: $ALB_DNS"
+
+      - name: Create Target Group
+        id: create-tg
+        run: |
+          echo "🎯 Creating Target Group..."
+          
+          VPC_ID="${{ steps.get-vpc.outputs.VPC_ID }}"
+          
+          # Check if TG exists
+          TG_ARN=$(aws elbv2 describe-target-groups \
+            --names field-service-tg \
+            --query 'TargetGroups[0].TargetGroupArn' \
+            --output text \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "None")
+          
+          if [ "$TG_ARN" = "None" ] || [ -z "$TG_ARN" ]; then
+            echo "Creating new Target Group..."
+            TG_ARN=$(aws elbv2 create-target-group \
+              --name field-service-tg \
+              --protocol HTTP \
+              --port 3000 \
+              --vpc-id $VPC_ID \
+              --target-type ip \
+              --health-check-enabled \
+              --health-check-path /health \
+              --health-check-interval-seconds 30 \
+              --health-check-timeout-seconds 5 \
+              --healthy-threshold-count 2 \
+              --unhealthy-threshold-count 3 \
+              --region ${{ env.AWS_REGION }} \
+              --query 'TargetGroups[0].TargetGroupArn' \
+              --output text)
+            
+            echo "Created TG: $TG_ARN"
+          else
+            echo "Using existing TG: $TG_ARN"
+          fi
+          
+          echo "TG_ARN=$TG_ARN" >> $GITHUB_OUTPUT
+
+      - name: Create ALB Listener (HTTP)
+        run: |
+          echo "👂 Creating ALB Listener..."
+          
+          ALB_ARN="${{ steps.create-alb.outputs.ALB_ARN }}"
+          TG_ARN="${{ steps.create-tg.outputs.TG_ARN }}"
+          
+          # Check if listener exists
+          LISTENER_ARN=$(aws elbv2 describe-listeners \
+            --load-balancer-arn $ALB_ARN \
+            --query 'Listeners[?Port==`80`].ListenerArn' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          if [ -z "$LISTENER_ARN" ] || [ "$LISTENER_ARN" = "None" ]; then
+            echo "Creating HTTP listener..."
+            aws elbv2 create-listener \
+              --load-balancer-arn $ALB_ARN \
+              --protocol HTTP \
+              --port 80 \
+              --default-actions Type=forward,TargetGroupArn=$TG_ARN \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "Listener already exists"
+          fi
+          
+          echo "✅ Listener configured"
+
+      - name: Update ECS Service to use ALB
+        run: |
+          echo "🔄 Updating ECS Service to use ALB..."
+          
+          TG_ARN="${{ steps.create-tg.outputs.TG_ARN }}"
+          
+          # Get current service configuration
+          TASK_DEF=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query 'services[0].taskDefinition' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          SUBNETS=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' \
+            --output json \
+            --region ${{ env.AWS_REGION }})
+          
+          SG=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query 'services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          SUBNET_LIST=$(echo $SUBNETS | jq -r 'join(",")')
+          
+          echo "Task Definition: $TASK_DEF"
+          echo "Subnets: $SUBNET_LIST"
+          echo "Security Group: $SG"
+          
+          # Delete existing service
+          echo "Deleting existing service..."
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --desired-count 0 \
+            --region ${{ env.AWS_REGION }}
+          
+          sleep 30
+          
+          aws ecs delete-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --force \
+            --region ${{ env.AWS_REGION }}
+          
+          sleep 30
+          
+          # Create new service with ALB
+          echo "Creating service with ALB..."
+          aws ecs create-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service-name ${{ env.ECS_SERVICE }} \
+            --task-definition $TASK_DEF \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[$SG],assignPublicIp=ENABLED}" \
+            --load-balancers "targetGroupArn=$TG_ARN,containerName=field-service-backend,containerPort=3000" \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Service updated with ALB"
+
+      - name: Wait for service to stabilize
+        run: |
+          echo "⏳ Waiting for service to stabilize..."
+          
+          for i in {1..20}; do
+            echo "Check $i/20..."
+            
+            RUNNING_COUNT=$(aws ecs describe-services \
+              --cluster ${{ env.ECS_CLUSTER }} \
+              --services ${{ env.ECS_SERVICE }} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'services[0].runningCount' \
+              --output text)
+            
+            echo "Running tasks: $RUNNING_COUNT"
+            
+            if [ "$RUNNING_COUNT" = "1" ]; then
+              echo "✅ Service is running"
+              break
+            fi
+            
+            sleep 15
+          done
+
+      - name: Display URLs
+        run: |
+          ALB_DNS="${{ steps.create-alb.outputs.ALB_DNS }}"
+          
+          echo ""
+          echo "════════════════════════════════════════════════════════"
+          echo "✅ BACKEND ALB SETUP COMPLETE"
+          echo "════════════════════════════════════════════════════════"
+          echo ""
+          echo "🌐 Backend URL: http://$ALB_DNS"
+          echo "📍 Health Check: http://$ALB_DNS/health"
+          echo "📍 API: http://$ALB_DNS/api"
+          echo ""
+          echo "⚠️  Note: Update frontend with this URL"
+          echo "         VITE_API_URL=http://$ALB_DNS"
+          echo ""
+          echo "🔑 Test Credentials:"
+          echo "   • Email: admin@fieldservice.com"
+          echo "   • Password: admin123"
+          echo ""
+          echo "════════════════════════════════════════════════════════"
