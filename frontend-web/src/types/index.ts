@@ -207,6 +207,7 @@ export interface ClientContact {
   id: string;
   client_id: string;
   name: string;
+  title?: string;
   email?: string;
   phone?: string;
   role?: string;
@@ -219,6 +220,10 @@ export interface ClientLocation {
   client_id: string;
   name: string;
   address: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
   latitude?: number;
   longitude?: number;
   is_default: boolean;
@@ -228,13 +233,14 @@ export interface ClientLocation {
 export interface ClientContract {
   id: string;
   client_id: string;
+  contract_type: 'service' | 'maintenance' | 'other';
   contract_number?: string;
   start_date: string;
-  end_date: string;
+  end_date?: string;
   sla_response_time?: number;  // minutes
   sla_resolution_time?: number; // minutes
   file_url?: string;
-  status: 'active' | 'expired' | 'cancelled';
+  status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
 }

@@ -40,6 +40,9 @@ import {
 } from '@mui/icons-material';
 import { clientsService } from '@/services/clients.service';
 import type { Client, ClientContact, ClientLocation, ClientContract } from '@/types';
+import ContactDialog from './ContactDialog';
+import LocationDialog from './LocationDialog';
+import ContractDialog from './ContractDialog';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -107,8 +110,8 @@ const ClientDetail: React.FC = () => {
 
   const loadContacts = async () => {
     try {
-      const response = await clientsService.getContacts(id!);
-      setContacts(response.data);
+      const data = await clientsService.getContacts(id!);
+      setContacts(data);
     } catch (err: any) {
       console.error('Error loading contacts:', err);
     }
@@ -116,8 +119,8 @@ const ClientDetail: React.FC = () => {
 
   const loadLocations = async () => {
     try {
-      const response = await clientsService.getLocations(id!);
-      setLocations(response.data);
+      const data = await clientsService.getLocations(id!);
+      setLocations(data);
     } catch (err: any) {
       console.error('Error loading locations:', err);
     }
@@ -125,8 +128,8 @@ const ClientDetail: React.FC = () => {
 
   const loadContracts = async () => {
     try {
-      const response = await clientsService.getContracts(id!);
-      setContracts(response.data);
+      const data = await clientsService.getContracts(id!);
+      setContracts(data);
     } catch (err: any) {
       console.error('Error loading contracts:', err);
     }
@@ -734,44 +737,50 @@ const ClientDetail: React.FC = () => {
         </TabPanel>
       </Card>
 
-      {/* Contact Dialog - Placeholder for now */}
-      <Dialog open={contactDialog} onClose={() => setContactDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>{selectedContact ? 'Editar Contacto' : 'Nuevo Contacto'}</DialogTitle>
-        <DialogContent>
-          <Typography color="text.secondary" sx={{ py: 2 }}>
-            Funcionalidad en desarrollo...
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setContactDialog(false)}>Cerrar</Button>
-        </DialogActions>
-      </Dialog>
+      {/* Contact Dialog */}
+      <ContactDialog
+        open={contactDialog}
+        onClose={() => {
+          setContactDialog(false);
+          setSelectedContact(null);
+        }}
+        onSuccess={() => {
+          setSuccess('Contacto guardado exitosamente');
+          loadContacts();
+        }}
+        clientId={id!}
+        contact={selectedContact}
+      />
 
-      {/* Location Dialog - Placeholder for now */}
-      <Dialog open={locationDialog} onClose={() => setLocationDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>{selectedLocation ? 'Editar Ubicación' : 'Nueva Ubicación'}</DialogTitle>
-        <DialogContent>
-          <Typography color="text.secondary" sx={{ py: 2 }}>
-            Funcionalidad en desarrollo...
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setLocationDialog(false)}>Cerrar</Button>
-        </DialogActions>
-      </Dialog>
+      {/* Location Dialog */}
+      <LocationDialog
+        open={locationDialog}
+        onClose={() => {
+          setLocationDialog(false);
+          setSelectedLocation(null);
+        }}
+        onSuccess={() => {
+          setSuccess('Ubicación guardada exitosamente');
+          loadLocations();
+        }}
+        clientId={id!}
+        location={selectedLocation}
+      />
 
-      {/* Contract Dialog - Placeholder for now */}
-      <Dialog open={contractDialog} onClose={() => setContractDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>{selectedContract ? 'Editar Contrato' : 'Nuevo Contrato'}</DialogTitle>
-        <DialogContent>
-          <Typography color="text.secondary" sx={{ py: 2 }}>
-            Funcionalidad en desarrollo...
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setContractDialog(false)}>Cerrar</Button>
-        </DialogActions>
-      </Dialog>
+      {/* Contract Dialog */}
+      <ContractDialog
+        open={contractDialog}
+        onClose={() => {
+          setContractDialog(false);
+          setSelectedContract(null);
+        }}
+        onSuccess={() => {
+          setSuccess('Contrato guardado exitosamente');
+          loadContracts();
+        }}
+        clientId={id!}
+        contract={selectedContract}
+      />
     </Box>
   );
 };

@@ -21,6 +21,7 @@ export interface UpdateClientData extends Partial<CreateClientData> {}
 
 export interface CreateContactData {
   name: string;
+  title?: string;
   email?: string;
   phone?: string;
   role?: string;
@@ -30,19 +31,24 @@ export interface CreateContactData {
 export interface CreateLocationData {
   name: string;
   address: string;
-  latitude?: number;
-  longitude?: number;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
+  latitude?: number | null;
+  longitude?: number | null;
   is_default?: boolean;
 }
 
 export interface CreateContractData {
+  contract_type: 'service' | 'maintenance' | 'other';
   contract_number?: string;
   start_date: string;
-  end_date: string;
-  sla_response_time?: number;
-  sla_resolution_time?: number;
+  end_date?: string | null;
+  sla_response_time?: number | null;
+  sla_resolution_time?: number | null;
   file_url?: string;
-  status?: 'active' | 'expired' | 'cancelled';
+  status?: 'active' | 'inactive';
 }
 
 export const clientsService = {
