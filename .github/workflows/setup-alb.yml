@@ -92,10 +92,28 @@ jobs:
 
       - name: Create Listener
         run: |
-          L=$(aws elbv2 describe-listeners --load-balancer-arn ${{ steps.alb.outputs.arn }} --query 'Listeners[0].ListenerArn' --output text 2>/dev/null || echo "")
+          echo "Creating/updating ALB listener..."
+          L=$(aws elbv2 describe-listeners --load-balancer-arn ${{ steps.alb.outputs.arn }} --query 'Listeners[?Port==`80`].ListenerArn' --output text 2>/dev/null || echo "")
+          
           if [ -z "$L" ]; then
-            aws elbv2 create-listener --load-balancer-arn ${{ steps.alb.outputs.arn }} --protocol HTTP --port 80 --default-actions Type=forward,TargetGroupArn=${{ steps.tg.outputs.arn }}
+            echo "Creating new listener on port 80..."
+            aws elbv2 create-listener \
+              --load-balancer-arn ${{ steps.alb.outputs.arn }} \
+              --protocol HTTP \
+              --port 80 \
+              --default-actions Type=forward,TargetGroupArn=${{ steps.tg.outputs.arn }}
+            echo "Listener created"
+          else
+            echo "Listener exists: $L"
+            echo "Updating default action..."
+            aws elbv2 modify-listener \
+              --listener-arn $L \
+              --default-actions Type=forward,TargetGroupArn=${{ steps.tg.outputs.arn }}
+            echo "Listener updated"
           fi
+          
+          echo "Waiting for listener to be ready..."
+          sleep 5
 
       - name: Get ECS Info
         id: ecs
