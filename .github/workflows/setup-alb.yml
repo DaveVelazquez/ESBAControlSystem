@@ -100,7 +100,11 @@ jobs:
       - name: Get ECS Info
         id: ecs
         run: |
-          # Get each value separately without pipes
+          # Disable AWS CLI pager and any auto-prompt
+          export AWS_PAGER=""
+          export AWS_CLI_AUTO_PROMPT=off
+          
+          # Get task definition
           TD=$(aws ecs list-task-definitions \
             --family-prefix field-service-backend \
             --sort DESC \
@@ -108,27 +112,38 @@ jobs:
             --query 'taskDefinitionArns[0]' \
             --output text)
           
-          # Get subnets without pipe - use file intermediary
+          echo "DEBUG 1: Got TD=$TD"
+          sleep 1
+          
+          # Get subnets - write to file to avoid any stdout issues
           aws ec2 describe-subnets \
             --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" \
             --query 'Subnets[*].SubnetId' \
-            --output text > /tmp/subnets.txt 2>/dev/null
+            --output text > /tmp/subnets.txt 2>&1
           
-          SUBS=$(cat /tmp/subnets.txt | tr '\t' ',')
+          echo "DEBUG 2: Subnets file created"
+          SUBS=$(cat /tmp/subnets.txt | tr '\t' ',' | tr -d '\n')
+          echo "DEBUG 3: Got SUBS=$SUBS"
+          sleep 1
           
+          # Get security group
           SG=$(aws ec2 describe-security-groups \
             --filters "Name=group-name,Values=field-service-backend-sg" \
             --query 'SecurityGroups[0].GroupId' \
             --output text)
           
+          echo "DEBUG 4: Got SG=$SG"
+          
           echo "Task Def: $TD"
           echo "Subnets: $SUBS"
           echo "SG: $SG"
           
-          # Write outputs
-          echo "td=$TD" >> $GITHUB_OUTPUT
-          echo "subs=$SUBS" >> $GITHUB_OUTPUT
-          echo "sg=$SG" >> $GITHUB_OUTPUT
+          # Write outputs with explicit line separators
+          {
+            echo "td=$TD"
+            echo "subs=$SUBS"
+            echo "sg=$SG"
+          } >> $GITHUB_OUTPUT
 
       - name: Delete Old Service
         run: |
