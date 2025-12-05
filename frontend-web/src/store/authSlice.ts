@@ -16,7 +16,13 @@ export const login = createAsyncThunk(
   'auth/login',
   async (credentials: LoginCredentials, { rejectWithValue }) => {
     try {
+      console.log('🔐 [AUTH] Intentando login con:', { email: credentials.email });
+      console.log('🌐 [AUTH] API URL:', import.meta.env.VITE_API_URL);
+      
       const { user, token } = await authService.login(credentials);
+      
+      console.log('✅ [AUTH] Login exitoso:', { user, tokenLength: token.length });
+      
       localStorage.setItem('token', token);
       localStorage.setItem('user', JSON.stringify(user));
       
@@ -25,6 +31,9 @@ export const login = createAsyncThunk(
       
       return { user, token };
     } catch (error: any) {
+      console.error('❌ [AUTH] Error en login:', error);
+      console.error('❌ [AUTH] Response data:', error.response?.data);
+      console.error('❌ [AUTH] Status:', error.response?.status);
       return rejectWithValue(error.response?.data?.message || 'Error al iniciar sesión');
     }
   }

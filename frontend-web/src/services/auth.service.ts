@@ -15,10 +15,17 @@ export interface RegisterData {
 
 export const authService = {
   async login(credentials: LoginCredentials): Promise<{ user: User; token: string }> {
+    console.log('📡 [AUTH SERVICE] Enviando request a:', '/auth/login');
+    console.log('📡 [AUTH SERVICE] Credentials:', { email: credentials.email, password: '***' });
+    
     const response = await api.post<ApiResponse<{ user: User; token: string }>>(
       '/auth/login',
       credentials
     );
+    
+    console.log('📡 [AUTH SERVICE] Response recibida');
+    console.log('📡 [AUTH SERVICE] Response data:', response.data);
+    
     return response.data;
   },
 
