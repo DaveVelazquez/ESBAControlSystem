@@ -300,7 +300,8 @@ jobs:
             --desired-count 1 \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNET_LIST],securityGroups=[$SG],assignPublicIp=ENABLED}" \
-            --load-balancers "targetGroupArn=$TG_ARN,containerName=field-service-backend,containerPort=3000" \
+            --load-balancers "targetGroupArn=$TG_ARN,containerName=backend,containerPort=3000" \
+            --health-check-grace-period-seconds 60 \
             --region ${{ env.AWS_REGION }}
           
           echo "✅ Service updated with ALB"
