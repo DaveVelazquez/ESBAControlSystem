@@ -1,0 +1,39 @@
+name: Setup API Proxy in CloudFront
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  DIST_ID: E2XXXXXXXXXX  # Necesitas el ID real de CloudFront
+  ALB_DNS: fs-alb-824963365.us-east-1.elb.amazonaws.com
+
+jobs:
+  setup-proxy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Info
+        run: |
+          echo "⚠️ Este workflow requiere configuración manual en CloudFront"
+          echo ""
+          echo "SOLUCIÓN ALTERNATIVA - Proxy API a través de CloudFront:"
+          echo ""
+          echo "1. Ve a CloudFront Console"
+          echo "2. Selecciona la distribución: d2rzil66ax3kqq.cloudfront.net"
+          echo "3. Ve a la pestaña 'Origins'"
+          echo "4. Crea un nuevo Origin:"
+          echo "   - Origin Domain: $ALB_DNS"
+          echo "   - Protocol: HTTP Only"
+          echo "   - Name: backend-alb"
+          echo ""
+          echo "5. Ve a la pestaña 'Behaviors'"
+          echo "6. Crea un nuevo Behavior:"
+          echo "   - Path pattern: /api/*"
+          echo "   - Origin: backend-alb"
+          echo "   - Viewer protocol: HTTPS only"
+          echo "   - Allowed HTTP Methods: GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE"
+          echo "   - Cache policy: CachingDisabled"
+          echo ""
+          echo "7. Actualiza el frontend para usar URL relativa '/api'"
+          echo ""
+          echo "Esto permite que CloudFront (HTTPS) sirva como proxy al ALB (HTTP)"
