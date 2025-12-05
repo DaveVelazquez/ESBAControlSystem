@@ -53,11 +53,30 @@ jobs:
           cat task-def.json | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' > task-def-clean.json
       
       - name: Update Task Definition with New Image
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          jq --arg IMAGE "$image_uri" '.containerDefinitions[0].image = $IMAGE' task-def-clean.json > task-def-new.json
+          # Update image
+          jq --arg IMAGE "$image_uri" '.containerDefinitions[0].image = $IMAGE' task-def-clean.json > task-def-temp.json
+          
+          # Add or update DATABASE_URL environment variable
+          if [ -n "$DATABASE_URL" ]; then
+            echo "✅ Adding DATABASE_URL to task definition"
+            jq --arg DB_URL "$DATABASE_URL" '
+              .containerDefinitions[0].environment = (
+                .containerDefinitions[0].environment // [] | 
+                map(select(.name != "DATABASE_URL")) + 
+                [{"name": "DATABASE_URL", "value": $DB_URL}]
+              )
+            ' task-def-temp.json > task-def-new.json
+          else
+            echo "⚠️  DATABASE_URL secret not set, keeping existing configuration"
+            mv task-def-temp.json task-def-new.json
+          fi
           
           echo "📄 New task definition:"
           cat task-def-new.json | jq '.containerDefinitions[0].image'
+          cat task-def-new.json | jq '.containerDefinitions[0].environment'
       
       - name: Register New Task Definition
         run: |

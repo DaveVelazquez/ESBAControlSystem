@@ -43,24 +43,20 @@ jobs:
           echo "image=$FULL_IMAGE" >> $GITHUB_OUTPUT
           echo "✅ Using image: $FULL_IMAGE"
       
-      - name: Get Database URL from Task Definition
-        id: db
+      - name: Execute Migration
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          DB_URL=$(aws ecs describe-task-definition \
-            --task-definition field-service-backend \
-            --query 'taskDefinition.containerDefinitions[0].environment[?name==`DATABASE_URL`].value' \
-            --output text)
-          
-          if [ -z "$DB_URL" ]; then
-            echo "❌ DATABASE_URL not found in task definition"
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ DATABASE_URL secret not configured"
+            echo ""
+            echo "Please add DATABASE_URL to GitHub Secrets:"
+            echo "https://github.com/${{ github.repository }}/settings/secrets/actions"
+            echo ""
+            echo "Format: postgresql://user:password@host:port/database"
             exit 1
           fi
           
-          echo "✅ Found DATABASE_URL in task definition"
-          echo "database_url=$DB_URL" >> $GITHUB_OUTPUT
-      
-      - name: Execute Migration
-        run: |
           MIGRATION_FILE="backend/migrations/${{ github.event.inputs.migration_file }}"
           
           if [ ! -f "$MIGRATION_FILE" ]; then
@@ -73,7 +69,7 @@ jobs:
           echo "🚀 Executing migration in Docker container..."
           
           docker run --rm \
-            -e DATABASE_URL="${{ steps.db.outputs.database_url }}" \
+            -e DATABASE_URL="$DATABASE_URL" \
             -v $(pwd)/backend/migrations:/migrations:ro \
             ${{ steps.image.outputs.image }} \
             sh -c "apt-get update -qq && apt-get install -y -qq postgresql-client && psql \$DATABASE_URL -f /migrations/${{ github.event.inputs.migration_file }}"
@@ -82,10 +78,12 @@ jobs:
           echo "✅ Migration applied successfully"
       
       - name: Verify Tables
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           echo "📊 Verifying database schema..."
           docker run --rm \
-            -e DATABASE_URL="${{ steps.db.outputs.database_url }}" \
+            -e DATABASE_URL="$DATABASE_URL" \
             ${{ steps.image.outputs.image }} \
             sh -c "apt-get update -qq && apt-get install -y -qq postgresql-client && psql \$DATABASE_URL -c '\\dt'"
       
