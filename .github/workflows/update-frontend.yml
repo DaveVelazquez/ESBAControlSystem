@@ -28,7 +28,7 @@ jobs:
       - name: Build Frontend
         working-directory: frontend-web
         run: |
-          npm ci
+          npm install
           npm run build
       
       - name: Deploy to S3
