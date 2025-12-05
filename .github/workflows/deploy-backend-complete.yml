@@ -252,49 +252,59 @@ jobs:
           
           echo "Subnets: $SUBNETS"
           
-          # Create Security Group with PUBLIC access
-          TIMESTAMP=$(date +%s)
-          SG_NAME="backend-public-$TIMESTAMP"
+          # Try to find existing Security Group or create new one
+          SG_NAME="field-service-backend-sg"
           
-          SG_ID=$(aws ec2 create-security-group \
-            --group-name "$SG_NAME" \
-            --description "Backend Security Group - Public Access" \
-            --vpc-id $VPC_ID \
-            --region ${{ env.AWS_REGION }} \
-            --query 'GroupId' \
-            --output text)
+          SG_ID=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=$SG_NAME" "Name=vpc-id,Values=$VPC_ID" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
           
-          echo "Created Security Group: $SG_ID"
-          
-          # Wait for SG to be available
-          sleep 5
-          
-          # Add ingress rules
-          echo "Adding ingress rules..."
-          
-          # Port 3000 (API)
-          aws ec2 authorize-security-group-ingress \
-            --group-id $SG_ID \
-            --protocol tcp \
-            --port 3000 \
-            --cidr 0.0.0.0/0 \
-            --region ${{ env.AWS_REGION }}
-          
-          # Port 80 (HTTP)
-          aws ec2 authorize-security-group-ingress \
-            --group-id $SG_ID \
-            --protocol tcp \
-            --port 80 \
-            --cidr 0.0.0.0/0 \
-            --region ${{ env.AWS_REGION }}
-          
-          # Port 443 (HTTPS)
-          aws ec2 authorize-security-group-ingress \
-            --group-id $SG_ID \
-            --protocol tcp \
-            --port 443 \
-            --cidr 0.0.0.0/0 \
-            --region ${{ env.AWS_REGION }}
+          if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+            echo "Creating new Security Group..."
+            SG_ID=$(aws ec2 create-security-group \
+              --group-name "$SG_NAME" \
+              --description "Backend Security Group - Public Access" \
+              --vpc-id $VPC_ID \
+              --region ${{ env.AWS_REGION }} \
+              --query 'GroupId' \
+              --output text)
+            
+            echo "Created Security Group: $SG_ID"
+            
+            # Wait for SG to be available
+            sleep 5
+            
+            # Add ingress rules
+            echo "Adding ingress rules..."
+            
+            # Port 3000 (API)
+            aws ec2 authorize-security-group-ingress \
+              --group-id $SG_ID \
+              --protocol tcp \
+              --port 3000 \
+              --cidr 0.0.0.0/0 \
+              --region ${{ env.AWS_REGION }}
+            
+            # Port 80 (HTTP)
+            aws ec2 authorize-security-group-ingress \
+              --group-id $SG_ID \
+              --protocol tcp \
+              --port 80 \
+              --cidr 0.0.0.0/0 \
+              --region ${{ env.AWS_REGION }}
+            
+            # Port 443 (HTTPS)
+            aws ec2 authorize-security-group-ingress \
+              --group-id $SG_ID \
+              --protocol tcp \
+              --port 443 \
+              --cidr 0.0.0.0/0 \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "Using existing Security Group: $SG_ID"
+          fi
           
           echo "✅ Security Group configured"
           
