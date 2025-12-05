@@ -1,0 +1,59 @@
+name: Fix S3 Public Access
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  BUCKET_NAME: field-service-frontend-prod
+
+jobs:
+  fix-s3:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Enable Public Access
+        run: |
+          echo "Habilitando acceso público al bucket..."
+          
+          # Remover bloqueo de acceso público
+          aws s3api put-public-access-block \
+            --bucket $BUCKET_NAME \
+            --public-access-block-configuration \
+            BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false
+          
+          # Aplicar política de bucket público
+          cat > policy.json << 'EOF'
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "PublicReadGetObject",
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "s3:GetObject",
+                "Resource": "arn:aws:s3:::field-service-frontend-prod/*"
+              }
+            ]
+          }
+          EOF
+          
+          aws s3api put-bucket-policy --bucket $BUCKET_NAME --policy file://policy.json
+          
+          echo "✅ Bucket configurado para acceso público"
+      
+      - name: Results
+        run: |
+          echo "✅ S3 bucket ahora es público"
+          echo ""
+          echo "URLs disponibles:"
+          echo "  HTTP (S3): http://$BUCKET_NAME.s3-website-us-east-1.amazonaws.com"
+          echo "  HTTPS (CloudFront): https://d2rzil66ax3kqq.cloudfront.net"
+          echo ""
+          echo "Para testing en móvil, usa la URL HTTP del S3"

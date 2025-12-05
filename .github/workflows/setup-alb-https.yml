@@ -1,0 +1,51 @@
+name: Setup ALB HTTPS
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ALB_NAME: fs-alb
+  TG_NAME: fs-tg
+
+jobs:
+  setup-https:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Request ACM Certificate
+        id: cert
+        run: |
+          # Solicitar certificado para el dominio del ALB
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names $ALB_NAME --query 'LoadBalancers[0].DNSName' --output text)
+          echo "ALB DNS: $ALB_DNS"
+          
+          # Nota: ACM requiere un dominio real. Para testing, usaremos certificado autofirmado
+          echo "⚠️ ACM requiere dominio verificado. Continuando sin HTTPS listener..."
+          echo "Para HTTPS necesitas:"
+          echo "1. Un dominio registrado (ej: tudominio.com)"
+          echo "2. Verificar el dominio en ACM"
+          echo "3. Crear listener HTTPS con el certificado"
+          
+          echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
+      
+      - name: Results
+        run: |
+          echo "⚠️ HTTPS requiere dominio verificado"
+          echo ""
+          echo "OPCIÓN 1 - Usar HTTP (actual):"
+          echo "  Frontend: http://field-service-frontend-prod.s3-website-us-east-1.amazonaws.com"
+          echo "  Backend: http://${{ steps.cert.outputs.alb_dns }}"
+          echo ""
+          echo "OPCIÓN 2 - Configurar dominio propio:"
+          echo "  1. Registrar dominio en Route53"
+          echo "  2. Solicitar certificado SSL en ACM"
+          echo "  3. Verificar dominio"
+          echo "  4. Crear listener HTTPS:443 en ALB"
+          echo "  5. Actualizar CloudFront para usar dominio"
