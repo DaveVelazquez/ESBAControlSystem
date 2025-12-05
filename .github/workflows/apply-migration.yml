@@ -1,0 +1,82 @@
+name: Apply Database Migrations
+
+on:
+  workflow_dispatch:
+    inputs:
+      migration_file:
+        description: 'Migration file to apply (e.g., 004_create_clients_tables.sql)'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Get RDS Endpoint
+        id: rds
+        run: |
+          # Get RDS instance endpoint
+          ENDPOINT=$(aws rds describe-db-instances \
+            --query 'DBInstances[?DBInstanceIdentifier==`field-service-db`].Endpoint.Address' \
+            --output text)
+          
+          echo "endpoint=$ENDPOINT" >> $GITHUB_OUTPUT
+          echo "✅ RDS Endpoint: $ENDPOINT"
+      
+      - name: Install PostgreSQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      
+      - name: Apply Migration
+        env:
+          PGHOST: ${{ steps.rds.outputs.endpoint }}
+          PGPORT: 5432
+          PGDATABASE: ${{ secrets.DB_NAME }}
+          PGUSER: ${{ secrets.DB_USER }}
+          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          MIGRATION_FILE="backend/migrations/${{ github.event.inputs.migration_file }}"
+          
+          if [ ! -f "$MIGRATION_FILE" ]; then
+            echo "❌ Migration file not found: $MIGRATION_FILE"
+            exit 1
+          fi
+          
+          echo "📄 Applying migration: $MIGRATION_FILE"
+          psql -f "$MIGRATION_FILE"
+          
+          echo "✅ Migration applied successfully"
+      
+      - name: Verify Tables
+        env:
+          PGHOST: ${{ steps.rds.outputs.endpoint }}
+          PGPORT: 5432
+          PGDATABASE: ${{ secrets.DB_NAME }}
+          PGUSER: ${{ secrets.DB_USER }}
+          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          echo "📊 Current database tables:"
+          psql -c "\dt"
+      
+      - name: Results
+        run: |
+          echo "✅ Migration completed successfully"
+          echo ""
+          echo "Applied: ${{ github.event.inputs.migration_file }}"
+          echo ""
+          echo "Next steps:"
+          echo "1. Update frontend to use new features"
+          echo "2. Test the new functionality"
