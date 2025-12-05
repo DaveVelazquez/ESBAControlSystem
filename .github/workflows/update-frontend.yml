@@ -6,7 +6,7 @@ on:
       backend_ip:
         description: 'Backend IP address'
         required: true
-        default: '100.26.235.222'
+        default: '18.207.254.90'
 
 env:
   AWS_REGION: us-east-1
