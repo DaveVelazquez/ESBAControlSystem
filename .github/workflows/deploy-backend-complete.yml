@@ -243,6 +243,31 @@ jobs:
           
           echo "VPC ID: $VPC_ID"
           
+          # Ensure Internet Gateway exists and subnets are public
+          echo "🌐 Setting up Internet Gateway..."
+          IGW_ID=$(aws ec2 describe-internet-gateways \
+            --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+            --query 'InternetGateways[0].InternetGatewayId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          if [ "$IGW_ID" = "None" ] || [ -z "$IGW_ID" ]; then
+            echo "Creating Internet Gateway..."
+            IGW_ID=$(aws ec2 create-internet-gateway \
+              --region ${{ env.AWS_REGION }} \
+              --query 'InternetGateway.InternetGatewayId' \
+              --output text)
+            
+            aws ec2 attach-internet-gateway \
+              --internet-gateway-id $IGW_ID \
+              --vpc-id $VPC_ID \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "Created IGW: $IGW_ID"
+          else
+            echo "Using existing IGW: $IGW_ID"
+          fi
+          
           # Get subnets
           SUBNETS=$(aws ec2 describe-subnets \
             --filters "Name=vpc-id,Values=$VPC_ID" \
@@ -251,6 +276,41 @@ jobs:
             --region ${{ env.AWS_REGION }})
           
           echo "Subnets: $SUBNETS"
+          
+          # Configure each subnet as public
+          for SUBNET_ID in $(echo $SUBNETS | jq -r '.[]'); do
+            echo "Configuring subnet $SUBNET_ID..."
+            
+            # Get route table
+            RT_ID=$(aws ec2 describe-route-tables \
+              --filters "Name=association.subnet-id,Values=$SUBNET_ID" \
+              --query 'RouteTables[0].RouteTableId' \
+              --output text \
+              --region ${{ env.AWS_REGION }})
+            
+            if [ "$RT_ID" = "None" ] || [ -z "$RT_ID" ]; then
+              RT_ID=$(aws ec2 describe-route-tables \
+                --filters "Name=vpc-id,Values=$VPC_ID" "Name=association.main,Values=true" \
+                --query 'RouteTables[0].RouteTableId' \
+                --output text \
+                --region ${{ env.AWS_REGION }})
+            fi
+            
+            # Add route to IGW
+            aws ec2 create-route \
+              --route-table-id $RT_ID \
+              --destination-cidr-block 0.0.0.0/0 \
+              --gateway-id $IGW_ID \
+              --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Route exists"
+            
+            # Enable auto-assign public IP
+            aws ec2 modify-subnet-attribute \
+              --subnet-id $SUBNET_ID \
+              --map-public-ip-on-launch \
+              --region ${{ env.AWS_REGION }}
+          done
+          
+          echo "✅ Subnets configured as public"
           
           # Try to find existing Security Group or create new one
           SG_NAME="field-service-backend-sg"
