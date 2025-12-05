@@ -154,23 +154,44 @@ jobs:
             --query 'taskDefinitionArns[0]' \
             --output text)
           
-          SUBNETS=$(aws ec2 describe-subnets \
+          # Get subnets as array, then join manually
+          SUBNET_JSON=$(aws ec2 describe-subnets \
             --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" \
             --query 'Subnets[*].SubnetId' \
-            --output text | tr '\t' ',')
+            --output json)
+          
+          # Convert JSON array to comma-separated string in bash
+          SUBNETS=$(echo "$SUBNET_JSON" | grep -o 'subnet-[a-z0-9]*' | paste -sd ',' -)
           
           SG=$(aws ec2 describe-security-groups \
             --filters "Name=group-name,Values=field-service-backend-sg" \
             --query 'SecurityGroups[0].GroupId' \
             --output text)
           
-          echo "task_def=$TASK_DEF" >> $GITHUB_OUTPUT
-          echo "subnets=$SUBNETS" >> $GITHUB_OUTPUT
-          echo "security_group=$SG" >> $GITHUB_OUTPUT
+          # Validate values
+          if [ -z "$TASK_DEF" ]; then
+            echo "ERROR: TASK_DEF is empty"
+            exit 1
+          fi
+          
+          if [ -z "$SUBNETS" ]; then
+            echo "ERROR: SUBNETS is empty"
+            exit 1
+          fi
+          
+          if [ -z "$SG" ]; then
+            echo "ERROR: SG is empty"
+            exit 1
+          fi
           
           echo "Task: $TASK_DEF"
           echo "Subnets: $SUBNETS"
           echo "SG: $SG"
+          
+          # Write outputs
+          echo "task_def=$TASK_DEF" >> $GITHUB_OUTPUT
+          echo "subnets=$SUBNETS" >> $GITHUB_OUTPUT
+          echo "security_group=$SG" >> $GITHUB_OUTPUT
 
       - name: Check Existing Service
         id: check
