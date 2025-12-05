@@ -10,6 +10,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
+  ECR_REPOSITORY: field-service-backend
 
 jobs:
   migrate:
@@ -17,18 +18,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install PostgreSQL Client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
       
-      - name: Apply Migration
-        env:
-          PGHOST: ${{ secrets.DB_HOST }}
-          PGPORT: 5432
-          PGDATABASE: ${{ secrets.DB_NAME }}
-          PGUSER: ${{ secrets.DB_USER }}
-          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | \
+            docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com
+      
+      - name: Get Backend Image
+        id: image
+        run: |
+          IMAGE_URI=$(aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
+            --output text)
+          
+          FULL_IMAGE="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_URI"
+          echo "image=$FULL_IMAGE" >> $GITHUB_OUTPUT
+          echo "✅ Using image: $FULL_IMAGE"
+      
+      - name: Get Database URL from Task Definition
+        id: db
+        run: |
+          DB_URL=$(aws ecs describe-task-definition \
+            --task-definition field-service-backend \
+            --query 'taskDefinition.containerDefinitions[0].environment[?name==`DATABASE_URL`].value' \
+            --output text)
+          
+          if [ -z "$DB_URL" ]; then
+            echo "❌ DATABASE_URL not found in task definition"
+            exit 1
+          fi
+          
+          echo "✅ Found DATABASE_URL in task definition"
+          echo "database_url=$DB_URL" >> $GITHUB_OUTPUT
+      
+      - name: Execute Migration
         run: |
           MIGRATION_FILE="backend/migrations/${{ github.event.inputs.migration_file }}"
           
@@ -37,21 +67,26 @@ jobs:
             exit 1
           fi
           
-          echo "📄 Applying migration: $MIGRATION_FILE"
-          psql -f "$MIGRATION_FILE"
+          echo "📄 Migration file: $MIGRATION_FILE"
+          echo ""
+          echo "🚀 Executing migration in Docker container..."
           
+          docker run --rm \
+            -e DATABASE_URL="${{ steps.db.outputs.database_url }}" \
+            -v $(pwd)/backend/migrations:/migrations:ro \
+            ${{ steps.image.outputs.image }} \
+            sh -c "apt-get update -qq && apt-get install -y -qq postgresql-client && psql \$DATABASE_URL -f /migrations/${{ github.event.inputs.migration_file }}"
+          
+          echo ""
           echo "✅ Migration applied successfully"
       
       - name: Verify Tables
-        env:
-          PGHOST: ${{ secrets.DB_HOST }}
-          PGPORT: 5432
-          PGDATABASE: ${{ secrets.DB_NAME }}
-          PGUSER: ${{ secrets.DB_USER }}
-          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          echo "📊 Current database tables:"
-          psql -c "\dt"
+          echo "📊 Verifying database schema..."
+          docker run --rm \
+            -e DATABASE_URL="${{ steps.db.outputs.database_url }}" \
+            ${{ steps.image.outputs.image }} \
+            sh -c "apt-get update -qq && apt-get install -y -qq postgresql-client && psql \$DATABASE_URL -c '\\dt'"
       
       - name: Results
         run: |
@@ -60,5 +95,5 @@ jobs:
           echo "Applied: ${{ github.event.inputs.migration_file }}"
           echo ""
           echo "Next steps:"
-          echo "1. Update frontend to use new features"
-          echo "2. Test the new functionality"
+          echo "1. Deploy updated backend: https://github.com/${{ github.repository }}/actions/workflows/deploy-backend.yml"
+          echo "2. Deploy updated frontend: https://github.com/${{ github.repository }}/actions/workflows/update-frontend.yml"
