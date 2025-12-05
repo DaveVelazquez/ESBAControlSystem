@@ -23,25 +23,17 @@ export const authService = {
       credentials
     );
     
-    console.log('📡 [AUTH SERVICE] Response recibida');
-    console.log('📡 [AUTH SERVICE] Response tipo:', typeof response);
-    console.log('📡 [AUTH SERVICE] Response completo:', response);
-    console.log('📡 [AUTH SERVICE] Response.data:', response.data);
-    console.log('📡 [AUTH SERVICE] Response.user:', response.user);
-    console.log('📡 [AUTH SERVICE] Response.token:', response.token);
+    console.log('📡 [AUTH SERVICE] Response recibida:', response);
     
-    // Compatibilidad: el interceptor puede retornar response.data directamente o response completo
-    // Si response tiene .user directamente, usar response; si no, usar response.data
-    const data = response.user ? response : response.data;
+    // El backend devuelve {success, data: {token, user}}
+    // El método api.post ya extrae response.data, así que response = {success, data: {token, user}}
+    if (!response || !response.data) {
+      throw new Error('Invalid response format from server');
+    }
     
-    console.log('📡 [AUTH SERVICE] Data final:', data);
-    console.log('📡 [AUTH SERVICE] User final:', data.user);
-    console.log('📡 [AUTH SERVICE] Token final:', data.token);
-    
-    // El backend devuelve {success, message, token, user}
     return {
-      user: data.user,
-      token: data.token
+      user: response.data.user,
+      token: response.data.token
     };
   },
 
