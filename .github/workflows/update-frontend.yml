@@ -3,10 +3,10 @@ name: Update Frontend with Backend URL
 on:
   workflow_dispatch:
     inputs:
-      backend_ip:
-        description: 'Backend IP address'
+      backend_url:
+        description: 'Backend ALB DNS (without http://)'
         required: true
-        default: '18.207.254.90'
+        default: 'field-service-alb-XXXXXXX.us-east-1.elb.amazonaws.com'
 
 env:
   AWS_REGION: us-east-1
@@ -44,11 +44,11 @@ jobs:
           cat > .env.production << EOF
           # Production Environment Variables for Frontend
           
-          # API URL - Backend deployed on AWS ECS
-          VITE_API_URL=http://${{ github.event.inputs.backend_ip }}:3000
+          # API URL - Backend deployed on AWS ECS behind ALB
+          VITE_API_URL=http://${{ github.event.inputs.backend_url }}
           
           # Socket.IO URL
-          VITE_SOCKET_URL=http://${{ github.event.inputs.backend_ip }}:3000
+          VITE_SOCKET_URL=http://${{ github.event.inputs.backend_url }}
           
           # App Name
           VITE_APP_NAME=Field Service Manager
