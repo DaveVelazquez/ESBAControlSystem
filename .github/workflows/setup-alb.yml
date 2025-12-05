@@ -110,9 +110,20 @@ jobs:
           echo "Subnets: $SUBS"
           echo "SG: $SG"
           
-          echo "td=$TD" >> $GITHUB_OUTPUT
-          echo "subs=$SUBS" >> $GITHUB_OUTPUT
-          echo "sg=$SG" >> $GITHUB_OUTPUT
+          # Write to temp file with explicit values
+          TMP=$(mktemp)
+          printf "td=%s\n" "$TD" > "$TMP"
+          printf "subs=%s\n" "$SUBS" >> "$TMP"
+          printf "sg=%s\n" "$SG" >> "$TMP"
+          
+          # Show what we're writing
+          echo "--- Writing to GITHUB_OUTPUT ---"
+          cat "$TMP"
+          echo "--- End ---"
+          
+          # Append to GITHUB_OUTPUT
+          cat "$TMP" >> "$GITHUB_OUTPUT"
+          rm -f "$TMP"
 
       - name: Delete Old Service
         run: |
