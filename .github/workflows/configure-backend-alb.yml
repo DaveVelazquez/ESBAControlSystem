@@ -242,7 +242,7 @@ jobs:
               --query 'services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]' \
               --output text)
             
-            echo "SERVICE_EXISTS=true" >> $GITHUB_OUTPUT
+            SERVICE_FLAG="true"
           else
             echo "Service doesn't exist, using defaults..."
             
@@ -267,7 +267,7 @@ jobs:
               --query 'SecurityGroups[0].GroupId' \
               --output text)
             
-            echo "SERVICE_EXISTS=false" >> $GITHUB_OUTPUT
+            SERVICE_FLAG="false"
           fi
           
           # Convert subnets array to comma-separated string
@@ -277,10 +277,13 @@ jobs:
           echo "Subnets: $SUBNET_LIST"
           echo "SG: $SG"
           
-          # Save to output with validation
-          echo "TASK_DEF=$TASK_DEF" >> $GITHUB_OUTPUT
-          echo "SUBNET_LIST=$SUBNET_LIST" >> $GITHUB_OUTPUT
-          echo "SG=$SG" >> $GITHUB_OUTPUT
+          # Save all outputs at once
+          {
+            echo "SERVICE_EXISTS=$SERVICE_FLAG"
+            echo "TASK_DEF=$TASK_DEF"
+            echo "SUBNET_LIST=$SUBNET_LIST"
+            echo "SG=$SG"
+          } >> $GITHUB_OUTPUT
 
       - name: Delete Existing Service
         if: steps.ecs-config.outputs.SERVICE_EXISTS == 'true'
