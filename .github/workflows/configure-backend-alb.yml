@@ -230,11 +230,11 @@ jobs:
               --query 'services[0].taskDefinition' \
               --output text)
             
-            SUBNETS=$(aws ecs describe-services \
+            SUBNET_LIST=$(aws ecs describe-services \
               --cluster ${{ env.ECS_CLUSTER }} \
               --services ${{ env.ECS_SERVICE }} \
-              --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' \
-              --output json)
+              --query 'join(`,`, services[0].networkConfiguration.awsvpcConfiguration.subnets)' \
+              --output text)
             
             SG=$(aws ecs describe-services \
               --cluster ${{ env.ECS_CLUSTER }} \
@@ -254,12 +254,12 @@ jobs:
               --query 'taskDefinitionArns[0]' \
               --output text)
             
-            # Get all subnets from VPC
+            # Get all subnets from VPC - use text output with join
             VPC_ID="${{ steps.vpc.outputs.VPC_ID }}"
-            SUBNETS=$(aws ec2 describe-subnets \
+            SUBNET_LIST=$(aws ec2 describe-subnets \
               --filters "Name=vpc-id,Values=$VPC_ID" \
-              --query 'Subnets[*].SubnetId' \
-              --output json)
+              --query 'join(`,`, Subnets[*].SubnetId)' \
+              --output text)
             
             # Get backend security group
             SG=$(aws ec2 describe-security-groups \
@@ -268,13 +268,6 @@ jobs:
               --output text)
             
             SERVICE_FLAG="false"
-          fi
-          
-          # Convert subnets array to comma-separated string
-          if [ -n "$SUBNETS" ] && [ "$SUBNETS" != "null" ]; then
-            SUBNET_LIST=$(echo "$SUBNETS" | jq -r 'join(",")' 2>/dev/null || echo "")
-          else
-            SUBNET_LIST=""
           fi
           
           echo "Task: $TASK_DEF"
