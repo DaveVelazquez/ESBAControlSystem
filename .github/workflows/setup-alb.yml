@@ -100,24 +100,35 @@ jobs:
       - name: Get ECS Info
         id: ecs
         run: |
-          # Capture all commands in a subshell to isolate output
-          {
-            TD=$(aws ecs list-task-definitions --family-prefix field-service-backend --sort DESC --max-items 1 --query 'taskDefinitionArns[0]' --output text 2>&1)
-            SUBS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" --query 'Subnets[*].SubnetId' --output text 2>&1 | sed 's/\t/,/g')
-            SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=field-service-backend-sg" --query 'SecurityGroups[0].GroupId' --output text 2>&1)
-            
-            printf "td=%s\nsubs=%s\nsg=%s\n" "$TD" "$SUBS" "$SG"
-          } > /tmp/ecs-info.txt
+          # Get each value separately without pipes
+          TD=$(aws ecs list-task-definitions \
+            --family-prefix field-service-backend \
+            --sort DESC \
+            --max-items 1 \
+            --query 'taskDefinitionArns[0]' \
+            --output text)
           
-          echo "Task Def: $(echo "$TD")"
-          echo "Subnets: $(echo "$SUBS")"
-          echo "SG: $(echo "$SG")"
+          # Get subnets without pipe - use file intermediary
+          aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" \
+            --query 'Subnets[*].SubnetId' \
+            --output text > /tmp/subnets.txt 2>/dev/null
           
-          echo "--- Content to write ---"
-          cat /tmp/ecs-info.txt
-          echo "--- End ---"
+          SUBS=$(cat /tmp/subnets.txt | tr '\t' ',')
           
-          cat /tmp/ecs-info.txt >> "$GITHUB_OUTPUT"
+          SG=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=field-service-backend-sg" \
+            --query 'SecurityGroups[0].GroupId' \
+            --output text)
+          
+          echo "Task Def: $TD"
+          echo "Subnets: $SUBS"
+          echo "SG: $SG"
+          
+          # Write outputs
+          echo "td=$TD" >> $GITHUB_OUTPUT
+          echo "subs=$SUBS" >> $GITHUB_OUTPUT
+          echo "sg=$SG" >> $GITHUB_OUTPUT
 
       - name: Delete Old Service
         run: |
