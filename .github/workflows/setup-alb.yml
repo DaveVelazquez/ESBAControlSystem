@@ -100,7 +100,7 @@ jobs:
       - name: Get ECS Info
         id: ecs
         run: |
-          # Disable AWS CLI pager and any auto-prompt
+          # Disable AWS CLI pager
           export AWS_PAGER=""
           export AWS_CLI_AUTO_PROMPT=off
           
@@ -112,19 +112,13 @@ jobs:
             --query 'taskDefinitionArns[0]' \
             --output text)
           
-          echo "DEBUG 1: Got TD=$TD"
-          sleep 1
-          
-          # Get subnets - write to file to avoid any stdout issues
+          # Get subnets
           aws ec2 describe-subnets \
             --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" \
             --query 'Subnets[*].SubnetId' \
             --output text > /tmp/subnets.txt 2>&1
           
-          echo "DEBUG 2: Subnets file created"
           SUBS=$(cat /tmp/subnets.txt | tr '\t' ',' | tr -d '\n')
-          echo "DEBUG 3: Got SUBS=$SUBS"
-          sleep 1
           
           # Get security group
           SG=$(aws ec2 describe-security-groups \
@@ -132,18 +126,21 @@ jobs:
             --query 'SecurityGroups[0].GroupId' \
             --output text)
           
-          echo "DEBUG 4: Got SG=$SG"
-          
           echo "Task Def: $TD"
           echo "Subnets: $SUBS"
           echo "SG: $SG"
           
-          # Write outputs with explicit line separators
-          {
-            echo "td=$TD"
-            echo "subs=$SUBS"
-            echo "sg=$SG"
-          } >> $GITHUB_OUTPUT
+          # Write to temp file, filter out invalid lines, then append
+          TEMP_OUT=$(mktemp)
+          cat > "$TEMP_OUT" << ENDMARKER
+td=$TD
+subs=$SUBS
+sg=$SG
+ENDMARKER
+          
+          # Filter: only keep lines with = and not containing "None" as standalone value
+          grep '=' "$TEMP_OUT" | grep -v '^None$' >> "$GITHUB_OUTPUT"
+          rm -f "$TEMP_OUT"
 
       - name: Delete Old Service
         run: |
