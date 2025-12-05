@@ -6,6 +6,9 @@ COPY package.json ./
 RUN npm install --production
 
 COPY server.js ./
+COPY run-migration.js ./
+COPY migrations ./migrations
+COPY src ./src
 
 EXPOSE 3000
 
