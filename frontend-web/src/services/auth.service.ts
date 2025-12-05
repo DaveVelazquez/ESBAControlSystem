@@ -1,5 +1,5 @@
 import api from './api';
-import type { User, ApiResponse } from '@/types';
+import type { User } from '@/types';
 
 export interface LoginCredentials {
   email: string;
@@ -18,23 +18,18 @@ export const authService = {
     console.log('📡 [AUTH SERVICE] Enviando request a:', '/auth/login');
     console.log('📡 [AUTH SERVICE] Credentials:', { email: credentials.email, password: '***' });
     
-    const response = await api.post<ApiResponse<{ success: boolean; message: string; user: User; token: string }>>(
+    // El interceptor retorna response.data directamente
+    const data = await api.post<{ success: boolean; message: string; user: User; token: string }>(
       '/auth/login',
       credentials
     );
     
     console.log('📡 [AUTH SERVICE] Response recibida');
-    console.log('📡 [AUTH SERVICE] Response completo:', response);
-    console.log('📡 [AUTH SERVICE] Response.data:', response.data);
-    
-    // El backend devuelve {success, message, token, user}
-    // El interceptor retorna el response completo, así que usamos response.data
-    const data = response.data;
-    
-    console.log('📡 [AUTH SERVICE] Data extraída:', data);
+    console.log('📡 [AUTH SERVICE] Data completa:', data);
     console.log('📡 [AUTH SERVICE] User:', data.user);
     console.log('📡 [AUTH SERVICE] Token:', data.token);
     
+    // El backend devuelve {success, message, token, user}
     return {
       user: data.user,
       token: data.token
@@ -42,11 +37,12 @@ export const authService = {
   },
 
   async register(data: RegisterData): Promise<{ user: User; token: string }> {
-    const response = await api.post<ApiResponse<{ user: User; token: string }>>(
+    // El interceptor retorna response.data directamente
+    const response = await api.post<{ user: User; token: string }>(
       '/auth/register',
       data
     );
-    return response.data;
+    return response;
   },
 
   async logout(): Promise<void> {
@@ -56,12 +52,14 @@ export const authService = {
   },
 
   async getCurrentUser(): Promise<User> {
-    const response = await api.get<ApiResponse<User>>('/auth/me');
-    return response.data;
+    // El interceptor retorna response.data directamente
+    const user = await api.get<User>('/auth/me');
+    return user;
   },
 
   async refreshToken(): Promise<string> {
-    const response = await api.post<ApiResponse<{ token: string }>>('/auth/refresh');
-    return response.data.token;
+    // El interceptor retorna response.data directamente
+    const data = await api.post<{ token: string }>('/auth/refresh');
+    return data.token;
   },
 };

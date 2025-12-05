@@ -43,7 +43,8 @@ class ApiService {
       (response) => {
         console.log('📥 [API RESPONSE]', response.status, response.config.url);
         console.log('📥 [API RESPONSE] Data:', response.data);
-        return response;
+        // Return response.data directly so services don't need to access .data
+        return response.data;
       },
       (error: AxiosError) => {
         console.error('❌ [API RESPONSE ERROR]', error.message);
