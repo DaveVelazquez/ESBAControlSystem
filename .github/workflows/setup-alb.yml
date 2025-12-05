@@ -1,4 +1,4 @@
-name: Setup ALB
+name: Setup Backend ALB
 
 on:
   workflow_dispatch:
