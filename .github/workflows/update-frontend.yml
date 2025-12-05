@@ -91,10 +91,18 @@ jobs:
             --cache-control "no-cache, no-store, must-revalidate"
           
           echo "🔧 Configuring S3 website for SPA routing..."
-          aws s3 website s3://${{ env.S3_BUCKET }} \
-            --index-document index.html \
-            --error-document index.html \
+          aws s3api put-bucket-website \
+            --bucket ${{ env.S3_BUCKET }} \
+            --website-configuration '{
+              "IndexDocument": {"Suffix": "index.html"},
+              "ErrorDocument": {"Key": "index.html"}
+            }' \
             --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Website configuration applied"
+          
+          # Verify configuration
+          aws s3api get-bucket-website --bucket ${{ env.S3_BUCKET }} --region ${{ env.AWS_REGION }}
           
           echo "✅ Frontend deployed to S3"
 
