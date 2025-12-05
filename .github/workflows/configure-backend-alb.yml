@@ -270,15 +270,17 @@ jobs:
             echo "SERVICE_EXISTS=false" >> $GITHUB_OUTPUT
           fi
           
-          SUBNET_LIST=$(echo $SUBNETS | jq -r 'join(",")')
-          
-          echo "TASK_DEF=$TASK_DEF" >> $GITHUB_OUTPUT
-          echo "SUBNET_LIST=$SUBNET_LIST" >> $GITHUB_OUTPUT
-          echo "SG=$SG" >> $GITHUB_OUTPUT
+          # Convert subnets array to comma-separated string
+          SUBNET_LIST=$(echo "$SUBNETS" | jq -r 'join(",")')
           
           echo "Task: $TASK_DEF"
           echo "Subnets: $SUBNET_LIST"
           echo "SG: $SG"
+          
+          # Save to output with validation
+          echo "TASK_DEF=$TASK_DEF" >> $GITHUB_OUTPUT
+          echo "SUBNET_LIST=$SUBNET_LIST" >> $GITHUB_OUTPUT
+          echo "SG=$SG" >> $GITHUB_OUTPUT
 
       - name: Delete Existing Service
         if: steps.ecs-config.outputs.SERVICE_EXISTS == 'true'
