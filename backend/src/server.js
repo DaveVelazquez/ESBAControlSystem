@@ -17,6 +17,7 @@ const checkInRoutes = require('./routes/checkin');
 const evidencesRoutes = require('./routes/evidences');
 const reportsRoutes = require('./routes/reports');
 const locationsRoutes = require('./routes/locations');
+const clientsRoutes = require('./routes/clients');
 
 // Import middleware
 const { errorHandler } = require('./middleware/errorHandler');
@@ -69,6 +70,7 @@ app.use('/api/orders', checkInRoutes);
 app.use('/api/orders', evidencesRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/locations', locationsRoutes);
+app.use('/api/clients', clientsRoutes);
 
 // API Documentation
 app.get('/api', (req, res) => {

@@ -184,3 +184,72 @@ export interface ApiError {
   code?: string;
   errors?: Record<string, string[]>;
 }
+
+// Client Types
+export interface Client {
+  id: string;
+  name: string;
+  legal_name?: string;
+  email?: string;
+  phone?: string;
+  status: 'active' | 'inactive';
+  created_at: string;
+  updated_at: string;
+  total_orders?: number;
+  primary_contact?: {
+    name: string;
+    email: string;
+    phone: string;
+  };
+}
+
+export interface ClientContact {
+  id: string;
+  client_id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  role?: string;
+  is_primary: boolean;
+  created_at: string;
+}
+
+export interface ClientLocation {
+  id: string;
+  client_id: string;
+  name: string;
+  address: string;
+  latitude?: number;
+  longitude?: number;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface ClientContract {
+  id: string;
+  client_id: string;
+  contract_number?: string;
+  start_date: string;
+  end_date: string;
+  sla_response_time?: number;  // minutes
+  sla_resolution_time?: number; // minutes
+  file_url?: string;
+  status: 'active' | 'expired' | 'cancelled';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientServiceHistory {
+  id: string;
+  client_id: string;
+  order_number: string;
+  status: OrderStatus;
+  priority: OrderPriority;
+  technician_name?: string;
+  location_name?: string;
+  duration_minutes?: number;
+  created_at: string;
+  completed_at?: string;
+  sla_response_met?: boolean;
+  sla_resolution_met?: boolean;
+}
