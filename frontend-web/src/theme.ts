@@ -11,18 +11,18 @@ const breakpoints = {
   },
 };
 
-// Color palette
+// Color palette - ESBA Consultores Theme
 const palette = {
   primary: {
-    main: '#1976d2',
-    light: '#42a5f5',
-    dark: '#1565c0',
+    main: '#0066cc',      // ESBA primary blue
+    light: '#3385d6',
+    dark: '#004c99',
     contrastText: '#fff',
   },
   secondary: {
-    main: '#9c27b0',
-    light: '#ba68c8',
-    dark: '#7b1fa2',
+    main: '#00a8e8',      // ESBA secondary blue
+    light: '#33b9ed',
+    dark: '#0089c2',
     contrastText: '#fff',
   },
   success: {
@@ -41,13 +41,17 @@ const palette = {
     dark: '#e65100',
   },
   info: {
-    main: '#0288d1',
-    light: '#03a9f4',
-    dark: '#01579b',
+    main: '#00509e',      // ESBA accent
+    light: '#3373b5',
+    dark: '#003d7a',
   },
   background: {
-    default: '#f5f5f5',
+    default: '#f5f7fa',   // ESBA gray
     paper: '#ffffff',
+  },
+  text: {
+    primary: '#2c3e50',   // ESBA dark text
+    secondary: '#546e7a',
   },
 };
 

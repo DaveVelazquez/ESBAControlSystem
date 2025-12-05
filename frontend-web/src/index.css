@@ -1,3 +1,15 @@
+/* ESBA Consultores Color Scheme */
+:root {
+  --esba-primary: #0066cc;
+  --esba-primary-dark: #004c99;
+  --esba-primary-light: #3385d6;
+  --esba-secondary: #00a8e8;
+  --esba-accent: #00509e;
+  --esba-gray: #f5f7fa;
+  --esba-dark: #1a1a2e;
+  --esba-text: #2c3e50;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -11,6 +23,7 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: var(--esba-gray);
 }
 
 code {
@@ -25,16 +38,16 @@ code {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: #f5f7fa;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #888;
+  background: var(--esba-primary);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: var(--esba-primary-dark);
 }
 
 /* Mapbox GL overrides */
