@@ -18,7 +18,7 @@ export const authService = {
     console.log('📡 [AUTH SERVICE] Enviando request a:', '/auth/login');
     console.log('📡 [AUTH SERVICE] Credentials:', { email: credentials.email, password: '***' });
     
-    const response = await api.post<ApiResponse<{ user: User; token: string }>>(
+    const response = await api.post<ApiResponse<{ success: boolean; message: string; user: User; token: string }>>(
       '/auth/login',
       credentials
     );
@@ -26,7 +26,12 @@ export const authService = {
     console.log('📡 [AUTH SERVICE] Response recibida');
     console.log('📡 [AUTH SERVICE] Response data:', response.data);
     
-    return response.data;
+    // El backend devuelve {success, message, token, user}
+    // Necesitamos extraer solo {user, token}
+    return {
+      user: response.data.user,
+      token: response.data.token
+    };
   },
 
   async register(data: RegisterData): Promise<{ user: User; token: string }> {
