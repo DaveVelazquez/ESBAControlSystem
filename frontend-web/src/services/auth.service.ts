@@ -24,13 +24,20 @@ export const authService = {
     );
     
     console.log('📡 [AUTH SERVICE] Response recibida');
-    console.log('📡 [AUTH SERVICE] Response data:', response.data);
+    console.log('📡 [AUTH SERVICE] Response completo:', response);
+    console.log('📡 [AUTH SERVICE] Response.data:', response.data);
     
     // El backend devuelve {success, message, token, user}
-    // Necesitamos extraer solo {user, token}
+    // El interceptor retorna el response completo, así que usamos response.data
+    const data = response.data;
+    
+    console.log('📡 [AUTH SERVICE] Data extraída:', data);
+    console.log('📡 [AUTH SERVICE] User:', data.user);
+    console.log('📡 [AUTH SERVICE] Token:', data.token);
+    
     return {
-      user: response.data.user,
-      token: response.data.token
+      user: data.user,
+      token: data.token
     };
   },
 
