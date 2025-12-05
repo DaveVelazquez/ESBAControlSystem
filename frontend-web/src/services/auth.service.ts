@@ -25,16 +25,24 @@ export const authService = {
     
     console.log('📡 [AUTH SERVICE] Response recibida:', response);
     
-    // El backend devuelve {success, data: {token, user}}
-    // El método api.post ya extrae response.data, así que response = {success, data: {token, user}}
-    if (!response || !response.data) {
+    // El backend puede devolver dos formatos:
+    // Formato 1 (nuevo): {success, data: {token, user}}
+    // Formato 2 (antiguo): {success, token, user}
+    
+    if (!response) {
+      throw new Error('No response from server');
+    }
+    
+    // Detectar formato y extraer user y token
+    const user = response.data?.user || response.user;
+    const token = response.data?.token || response.token;
+    
+    if (!user || !token) {
+      console.error('📡 [AUTH SERVICE] Invalid response format:', response);
       throw new Error('Invalid response format from server');
     }
     
-    return {
-      user: response.data.user,
-      token: response.data.token
-    };
+    return { user, token };
   },
 
   async register(data: RegisterData): Promise<{ user: User; token: string }> {
