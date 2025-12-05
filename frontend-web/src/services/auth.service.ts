@@ -27,13 +27,21 @@ export const authService = {
     console.log('📡 [AUTH SERVICE] Response tipo:', typeof response);
     console.log('📡 [AUTH SERVICE] Response completo:', response);
     console.log('📡 [AUTH SERVICE] Response.data:', response.data);
-    console.log('📡 [AUTH SERVICE] Response.data.user:', response.data?.user);
-    console.log('📡 [AUTH SERVICE] Response.data.token:', response.data?.token);
+    console.log('📡 [AUTH SERVICE] Response.user:', response.user);
+    console.log('📡 [AUTH SERVICE] Response.token:', response.token);
+    
+    // Compatibilidad: el interceptor puede retornar response.data directamente o response completo
+    // Si response tiene .user directamente, usar response; si no, usar response.data
+    const data = response.user ? response : response.data;
+    
+    console.log('📡 [AUTH SERVICE] Data final:', data);
+    console.log('📡 [AUTH SERVICE] User final:', data.user);
+    console.log('📡 [AUTH SERVICE] Token final:', data.token);
     
     // El backend devuelve {success, message, token, user}
     return {
-      user: response.data.user,
-      token: response.data.token
+      user: data.user,
+      token: data.token
     };
   },
 
