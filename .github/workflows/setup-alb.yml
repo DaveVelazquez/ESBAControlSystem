@@ -1,4 +1,4 @@
-name: Setup Application Load Balancer
+name: Setup ALB
 
 on:
   workflow_dispatch:
@@ -6,18 +6,13 @@ on:
 env:
   AWS_REGION: us-east-1
   VPC_ID: vpc-0940a20aa85d8f6bb
-  ECS_CLUSTER: field-service-cluster
-  ECS_SERVICE: field-service-backend
-  CONTAINER_NAME: backend
-  CONTAINER_PORT: 3000
 
 jobs:
-  setup-alb:
-    name: Configure ALB for Backend
+  setup:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Configure AWS Credentials
+      - name: Configure AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -27,260 +22,98 @@ jobs:
       - name: Get Subnets
         id: subnets
         run: |
-          SUBNET_1=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" --query 'Subnets[0].SubnetId' --output text)
-          SUBNET_2=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" --query 'Subnets[1].SubnetId' --output text)
-          
-          echo "subnet1=$SUBNET_1" >> $GITHUB_OUTPUT
-          echo "subnet2=$SUBNET_2" >> $GITHUB_OUTPUT
-          echo "Subnets: $SUBNET_1, $SUBNET_2"
+          S1=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" --query 'Subnets[0].SubnetId' --output text)
+          S2=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" --query 'Subnets[1].SubnetId' --output text)
+          echo "s1=$S1" >> $GITHUB_OUTPUT
+          echo "s2=$S2" >> $GITHUB_OUTPUT
 
       - name: Create ALB Security Group
-        id: alb-sg
+        id: albsg
         run: |
-          SG_ID=$(aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=field-service-alb-sg" \
-            --query 'SecurityGroups[0].GroupId' \
-            --output text 2>/dev/null || echo "")
-          
-          if [ -z "$SG_ID" ]; then
-            echo "Creating ALB Security Group..."
-            SG_ID=$(aws ec2 create-security-group \
-              --group-name field-service-alb-sg \
-              --description "Security group for ALB" \
-              --vpc-id ${{ env.VPC_ID }} \
-              --query 'GroupId' \
-              --output text)
-            
-            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0
-            aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 443 --cidr 0.0.0.0/0
+          SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=alb-sg" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+          if [ -z "$SG" ]; then
+            SG=$(aws ec2 create-security-group --group-name alb-sg --description "ALB SG" --vpc-id ${{ env.VPC_ID }} --query 'GroupId' --output text)
+            aws ec2 authorize-security-group-ingress --group-id $SG --protocol tcp --port 80 --cidr 0.0.0.0/0
           fi
-          
-          echo "sg_id=$SG_ID" >> $GITHUB_OUTPUT
-          echo "ALB SG: $SG_ID"
+          echo "id=$SG" >> $GITHUB_OUTPUT
 
       - name: Update Backend Security Group
         run: |
-          BACKEND_SG=$(aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=field-service-backend-sg" \
-            --query 'SecurityGroups[0].GroupId' \
-            --output text)
-          
-          aws ec2 authorize-security-group-ingress \
-            --group-id $BACKEND_SG \
-            --protocol tcp \
-            --port ${{ env.CONTAINER_PORT }} \
-            --source-group ${{ steps.alb-sg.outputs.sg_id }} 2>/dev/null || echo "Rule exists"
+          BSG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=field-service-backend-sg" --query 'SecurityGroups[0].GroupId' --output text)
+          aws ec2 authorize-security-group-ingress --group-id $BSG --protocol tcp --port 3000 --source-group ${{ steps.albsg.outputs.id }} 2>/dev/null || true
 
-      - name: Create Load Balancer
+      - name: Create ALB
         id: alb
         run: |
-          ALB_ARN=$(aws elbv2 describe-load-balancers \
-            --names field-service-alb \
-            --query 'LoadBalancers[0].LoadBalancerArn' \
-            --output text 2>/dev/null || echo "")
-          
-          if [ -z "$ALB_ARN" ]; then
-            echo "Creating ALB..."
-            ALB_ARN=$(aws elbv2 create-load-balancer \
-              --name field-service-alb \
-              --subnets ${{ steps.subnets.outputs.subnet1 }} ${{ steps.subnets.outputs.subnet2 }} \
-              --security-groups ${{ steps.alb-sg.outputs.sg_id }} \
-              --scheme internet-facing \
-              --type application \
-              --query 'LoadBalancers[0].LoadBalancerArn' \
-              --output text)
-            
-            echo "Waiting for ALB..."
+          ARN=$(aws elbv2 describe-load-balancers --names fs-alb --query 'LoadBalancers[0].LoadBalancerArn' --output text 2>/dev/null || echo "")
+          if [ -z "$ARN" ]; then
+            ARN=$(aws elbv2 create-load-balancer --name fs-alb --subnets ${{ steps.subnets.outputs.s1 }} ${{ steps.subnets.outputs.s2 }} --security-groups ${{ steps.albsg.outputs.id }} --query 'LoadBalancers[0].LoadBalancerArn' --output text)
             sleep 15
           fi
-          
-          ALB_DNS=$(aws elbv2 describe-load-balancers \
-            --load-balancer-arns $ALB_ARN \
-            --query 'LoadBalancers[0].DNSName' \
-            --output text)
-          
-          echo "alb_arn=$ALB_ARN" >> $GITHUB_OUTPUT
-          echo "alb_dns=$ALB_DNS" >> $GITHUB_OUTPUT
-          echo "ALB DNS: $ALB_DNS"
+          DNS=$(aws elbv2 describe-load-balancers --load-balancer-arns $ARN --query 'LoadBalancers[0].DNSName' --output text)
+          echo "arn=$ARN" >> $GITHUB_OUTPUT
+          echo "dns=$DNS" >> $GITHUB_OUTPUT
+          echo "ALB: $DNS"
 
       - name: Create Target Group
         id: tg
         run: |
-          TG_ARN=$(aws elbv2 describe-target-groups \
-            --names field-service-tg \
-            --query 'TargetGroups[0].TargetGroupArn' \
-            --output text 2>/dev/null || echo "")
-          
-          if [ -z "$TG_ARN" ]; then
-            echo "Creating Target Group..."
-            TG_ARN=$(aws elbv2 create-target-group \
-              --name field-service-tg \
-              --protocol HTTP \
-              --port ${{ env.CONTAINER_PORT }} \
-              --vpc-id ${{ env.VPC_ID }} \
-              --target-type ip \
-              --health-check-path /health \
-              --health-check-interval-seconds 30 \
-              --query 'TargetGroups[0].TargetGroupArn' \
-              --output text)
+          TG=$(aws elbv2 describe-target-groups --names fs-tg --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || echo "")
+          if [ -z "$TG" ]; then
+            TG=$(aws elbv2 create-target-group --name fs-tg --protocol HTTP --port 3000 --vpc-id ${{ env.VPC_ID }} --target-type ip --health-check-path /health --query 'TargetGroups[0].TargetGroupArn' --output text)
           fi
-          
-          echo "tg_arn=$TG_ARN" >> $GITHUB_OUTPUT
-          echo "Target Group: $TG_ARN"
+          echo "arn=$TG" >> $GITHUB_OUTPUT
 
       - name: Create Listener
         run: |
-          LISTENER=$(aws elbv2 describe-listeners \
-            --load-balancer-arn ${{ steps.alb.outputs.alb_arn }} \
-            --query 'Listeners[?Port==`80`].ListenerArn' \
-            --output text 2>/dev/null || echo "")
-          
-          if [ -z "$LISTENER" ]; then
-            echo "Creating listener..."
-            aws elbv2 create-listener \
-              --load-balancer-arn ${{ steps.alb.outputs.alb_arn }} \
-              --protocol HTTP \
-              --port 80 \
-              --default-actions Type=forward,TargetGroupArn=${{ steps.tg.outputs.tg_arn }}
+          L=$(aws elbv2 describe-listeners --load-balancer-arn ${{ steps.alb.outputs.arn }} --query 'Listeners[0].ListenerArn' --output text 2>/dev/null || echo "")
+          if [ -z "$L" ]; then
+            aws elbv2 create-listener --load-balancer-arn ${{ steps.alb.outputs.arn }} --protocol HTTP --port 80 --default-actions Type=forward,TargetGroupArn=${{ steps.tg.outputs.arn }}
           fi
 
-      - name: Get ECS Configuration
+      - name: Get ECS Info
         id: ecs
         run: |
-          set -euo pipefail
-          
-          TASK_DEF=$(aws ecs list-task-definitions \
-            --family-prefix field-service-backend \
-            --sort DESC \
-            --max-items 1 \
-            --query 'taskDefinitionArns[0]' \
-            --output text)
-          
-          # Get subnets as array, then join manually
-          SUBNET_JSON=$(aws ec2 describe-subnets \
-            --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" \
-            --query 'Subnets[*].SubnetId' \
-            --output json)
-          
-          # Convert JSON array to comma-separated string in bash
-          SUBNETS=$(echo "$SUBNET_JSON" | grep -o 'subnet-[a-z0-9]*' | paste -sd ',' -)
-          
-          SG=$(aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=field-service-backend-sg" \
-            --query 'SecurityGroups[0].GroupId' \
-            --output text)
-          
-          # Validate values
-          if [ -z "$TASK_DEF" ]; then
-            echo "ERROR: TASK_DEF is empty"
-            exit 1
-          fi
-          
-          if [ -z "$SUBNETS" ]; then
-            echo "ERROR: SUBNETS is empty"
-            exit 1
-          fi
-          
-          if [ -z "$SG" ]; then
-            echo "ERROR: SG is empty"
-            exit 1
-          fi
-          
-          echo "Task: $TASK_DEF"
-          echo "Subnets: $SUBNETS"
-          echo "SG: $SG"
-          
-          # Write to temp file first, then copy to GITHUB_OUTPUT
-          TEMP_FILE=$(mktemp)
-          cat > "$TEMP_FILE" << 'ENDOFOUTPUT'
-task_def=$TASK_DEF
-subnets=$SUBNETS
-security_group=$SG
-ENDOFOUTPUT
-          
-          # Replace variables
-          sed -i "s|\$TASK_DEF|$TASK_DEF|g" "$TEMP_FILE"
-          sed -i "s|\$SUBNETS|$SUBNETS|g" "$TEMP_FILE"
-          sed -i "s|\$SG|$SG|g" "$TEMP_FILE"
-          
-          # Copy to GITHUB_OUTPUT
-          cat "$TEMP_FILE" >> $GITHUB_OUTPUT
-          rm "$TEMP_FILE"
-
-      - name: Check Existing Service
-        id: check
-        run: |
-          STATUS=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services ${{ env.ECS_SERVICE }} \
-            --query 'services[0].status' \
-            --output text 2>/dev/null || echo "NONE")
-          
-          echo "exists=$([[ "$STATUS" == "ACTIVE" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
-          echo "Service exists: $([[ "$STATUS" == "ACTIVE" ]] && echo yes || echo no)"
+          TD=$(aws ecs list-task-definitions --family-prefix field-service-backend --sort DESC --max-items 1 --query 'taskDefinitionArns[0]' --output text)
+          SUBS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=${{ env.VPC_ID }}" --query 'Subnets[*].SubnetId' --output text | sed 's/\t/,/g')
+          SG=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=field-service-backend-sg" --query 'SecurityGroups[0].GroupId' --output text)
+          echo "td=$TD" >> $GITHUB_OUTPUT
+          echo "subs=$SUBS" >> $GITHUB_OUTPUT
+          echo "sg=$SG" >> $GITHUB_OUTPUT
 
       - name: Delete Old Service
-        if: steps.check.outputs.exists == 'true'
         run: |
-          echo "Stopping old service..."
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --desired-count 0
-          
-          sleep 30
-          
-          aws ecs delete-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --force
-          
-          sleep 20
+          ST=$(aws ecs describe-services --cluster field-service-cluster --services field-service-backend --query 'services[0].status' --output text 2>/dev/null || echo "NONE")
+          if [ "$ST" = "ACTIVE" ]; then
+            aws ecs update-service --cluster field-service-cluster --service field-service-backend --desired-count 0
+            sleep 30
+            aws ecs delete-service --cluster field-service-cluster --service field-service-backend --force
+            sleep 20
+          fi
 
-      - name: Create ECS Service with ALB
+      - name: Create Service
         run: |
-          echo "Creating ECS service..."
-          
           aws ecs create-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service-name ${{ env.ECS_SERVICE }} \
-            --task-definition ${{ steps.ecs.outputs.task_def }} \
+            --cluster field-service-cluster \
+            --service-name field-service-backend \
+            --task-definition ${{ steps.ecs.outputs.td }} \
             --desired-count 1 \
             --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[${{ steps.ecs.outputs.subnets }}],securityGroups=[${{ steps.ecs.outputs.security_group }}],assignPublicIp=ENABLED}" \
-            --load-balancers "targetGroupArn=${{ steps.tg.outputs.tg_arn }},containerName=${{ env.CONTAINER_NAME }},containerPort=${{ env.CONTAINER_PORT }}" \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ steps.ecs.outputs.subs }}],securityGroups=[${{ steps.ecs.outputs.sg }}],assignPublicIp=ENABLED}" \
+            --load-balancers "targetGroupArn=${{ steps.tg.outputs.arn }},containerName=backend,containerPort=3000" \
             --health-check-grace-period-seconds 60
 
-      - name: Wait for Service
+      - name: Wait
         run: |
-          echo "Waiting for service to stabilize..."
-          
           for i in {1..20}; do
-            RUNNING=$(aws ecs describe-services \
-              --cluster ${{ env.ECS_CLUSTER }} \
-              --services ${{ env.ECS_SERVICE }} \
-              --query 'services[0].runningCount' \
-              --output text)
-            
-            echo "Attempt $i: Running tasks = $RUNNING"
-            
-            if [ "$RUNNING" = "1" ]; then
-              echo "✅ Service is running"
-              break
-            fi
-            
+            R=$(aws ecs describe-services --cluster field-service-cluster --services field-service-backend --query 'services[0].runningCount' --output text)
+            echo "Check $i: $R tasks"
+            [ "$R" = "1" ] && break
             sleep 15
           done
 
-      - name: Display Results
+      - name: Results
         run: |
-          echo ""
-          echo "════════════════════════════════════════"
-          echo "✅ ALB SETUP COMPLETE"
-          echo "════════════════════════════════════════"
-          echo ""
-          echo "🌐 Backend URL: http://${{ steps.alb.outputs.alb_dns }}"
-          echo "📍 Health: http://${{ steps.alb.outputs.alb_dns }}/health"
-          echo ""
-          echo "Next: Update frontend with: ${{ steps.alb.outputs.alb_dns }}"
-          echo ""
+          echo "✅ Complete"
+          echo "URL: http://${{ steps.alb.outputs.dns }}"
+          echo "Next: Update frontend with: ${{ steps.alb.outputs.dns }}"
