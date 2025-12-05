@@ -81,7 +81,7 @@ jobs:
             {
               id: 1,
               email: 'admin@fieldservice.com',
-              password: '$2a$10$8K1p/a0dL3LKkOsim1GELefmhbZhf9l.5E8z5S5J9d6f1h7L4zJHO', // admin123
+              password: 'admin123', // Plain text for simplicity
               name: 'Admin User',
               role: 'admin'
             }
@@ -144,7 +144,7 @@ jobs:
               }
               
               // Verify password
-              const isValidPassword = await bcrypt.compare(password, user.password);
+              const isValidPassword = password === user.password; // Direct comparison
               
               if (!isValidPassword) {
                 return res.status(401).json({
