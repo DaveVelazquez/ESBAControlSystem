@@ -210,23 +210,20 @@ jobs:
       - name: Get ECS Service Configuration
         id: ecs-config
         run: |
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "🔧 VERSION: be4f29b-fixed"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          set -e
           echo "Getting ECS service configuration..."
           
           # Check if service exists
-          SERVICE_EXISTS=$(aws ecs describe-services \
+          SERVICE_STATUS=$(aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services ${{ env.ECS_SERVICE }} \
             --query 'services[0].status' \
             --output text 2>/dev/null || echo "NONE")
           
-          echo "Service status: $SERVICE_EXISTS"
+          echo "Service status: $SERVICE_STATUS"
           
-          if [ "$SERVICE_EXISTS" = "ACTIVE" ]; then
-            echo "Getting config from existing service..."
-            
+          if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
+            # Get config from existing service
             TASK_DEF=$(aws ecs describe-services \
               --cluster ${{ env.ECS_CLUSTER }} \
               --services ${{ env.ECS_SERVICE }} \
@@ -247,9 +244,7 @@ jobs:
             
             SERVICE_FLAG="true"
           else
-            echo "Service doesn't exist, using defaults..."
-            
-            # Get latest task definition
+            # Use defaults
             TASK_DEF=$(aws ecs list-task-definitions \
               --family-prefix field-service-backend \
               --sort DESC \
@@ -257,14 +252,12 @@ jobs:
               --query 'taskDefinitionArns[0]' \
               --output text)
             
-            # Get all subnets from VPC
-            VPC_ID="${{ steps.vpc.outputs.VPC_ID }}"
+            VPC_ID="vpc-0940a20aa85d8f6bb"
             SUBNET_LIST=$(aws ec2 describe-subnets \
               --filters "Name=vpc-id,Values=$VPC_ID" \
               --query 'join(`,`, Subnets[*].SubnetId)' \
               --output text)
             
-            # Get backend security group
             SG=$(aws ec2 describe-security-groups \
               --filters "Name=group-name,Values=field-service-backend-sg" \
               --query 'SecurityGroups[0].GroupId' \
@@ -273,31 +266,34 @@ jobs:
             SERVICE_FLAG="false"
           fi
           
-          echo "Task: $TASK_DEF"
-          echo "Subnets: $SUBNET_LIST"
-          echo "SG: $SG"
+          # Display values
+          echo "Task Definition: $TASK_DEF"
+          echo "Security Group: $SG"
+          echo "Subnet List: $SUBNET_LIST"
           
-          # Validate all required values
+          # Validate
           if [ -z "$TASK_DEF" ] || [ "$TASK_DEF" = "None" ]; then
-            echo "Error: Invalid TASK_DEF"
+            echo "ERROR: Invalid TASK_DEF value"
             exit 1
           fi
           
-          if [ -z "$SUBNET_LIST" ]; then
-            echo "Error: Invalid SUBNET_LIST"
+          if [ -z "$SUBNET_LIST" ] || [ "$SUBNET_LIST" = "None" ]; then
+            echo "ERROR: Invalid SUBNET_LIST value"
             exit 1
           fi
           
           if [ -z "$SG" ] || [ "$SG" = "None" ]; then
-            echo "Error: Invalid SG"
+            echo "ERROR: Invalid SG value"
             exit 1
           fi
           
-          # Save outputs - use >> without heredoc
-          echo "SERVICE_EXISTS=$SERVICE_FLAG" >> $GITHUB_OUTPUT
-          echo "TASK_DEF=$TASK_DEF" >> $GITHUB_OUTPUT
-          echo "SUBNET_LIST=$SUBNET_LIST" >> $GITHUB_OUTPUT
-          echo "SG=$SG" >> $GITHUB_OUTPUT
+          # Write to GitHub Output
+          echo "SERVICE_EXISTS=$SERVICE_FLAG" >> "$GITHUB_OUTPUT"
+          echo "TASK_DEF=$TASK_DEF" >> "$GITHUB_OUTPUT"
+          echo "SUBNET_LIST=$SUBNET_LIST" >> "$GITHUB_OUTPUT"
+          echo "SG=$SG" >> "$GITHUB_OUTPUT"
+          
+          echo "✅ Configuration saved"
 
       - name: Delete Existing Service
         if: steps.ecs-config.outputs.SERVICE_EXISTS == 'true'
