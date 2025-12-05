@@ -24,6 +24,8 @@ const Orders = React.lazy(() => import('@/pages/Orders'));
 const Technicians = React.lazy(() => import('@/pages/Technicians'));
 const Tracking = React.lazy(() => import('@/pages/Tracking'));
 const Reports = React.lazy(() => import('@/pages/Reports'));
+const ClientsList = React.lazy(() => import('@/pages/Clients/ClientsList'));
+const ClientDetail = React.lazy(() => import('@/pages/Clients/ClientDetail'));
 
 function App() {
   return (
@@ -81,6 +83,24 @@ function App() {
                     element={
                       <React.Suspense fallback={<div>Cargando...</div>}>
                         <Reports />
+                      </React.Suspense>
+                    }
+                  />
+                  
+                  <Route
+                    path="/clients"
+                    element={
+                      <React.Suspense fallback={<div>Cargando...</div>}>
+                        <ClientsList />
+                      </React.Suspense>
+                    }
+                  />
+                  
+                  <Route
+                    path="/clients/:id"
+                    element={
+                      <React.Suspense fallback={<div>Cargando...</div>}>
+                        <ClientDetail />
                       </React.Suspense>
                     }
                   />

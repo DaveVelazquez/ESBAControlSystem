@@ -29,6 +29,7 @@ import {
   Notifications as NotificationsIcon,
   Logout as LogoutIcon,
   Settings as SettingsIcon,
+  Business as BusinessIcon,
 } from '@mui/icons-material';
 import { useAppDispatch, useAppSelector } from '@/hooks/useAppDispatch';
 import { logout } from '@/store/authSlice';
@@ -45,6 +46,7 @@ interface MenuItem {
 const menuItems: MenuItem[] = [
   { title: 'Dashboard', path: '/dashboard', icon: <DashboardIcon /> },
   { title: 'Órdenes', path: '/orders', icon: <AssignmentIcon /> },
+  { title: 'Clientes', path: '/clients', icon: <BusinessIcon /> },
   { title: 'Técnicos', path: '/technicians', icon: <PeopleIcon /> },
   { title: 'Tracking', path: '/tracking', icon: <LocationIcon /> },
   { title: 'Reportes', path: '/reports', icon: <AssessmentIcon /> },
