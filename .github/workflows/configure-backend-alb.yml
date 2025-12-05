@@ -27,22 +27,22 @@ jobs:
         run: |
           echo "Getting VPC configuration..."
           
-          VPC_ID=$(aws ec2 describe-vpcs \
-            --filters "Name=is-default,Values=true" \
-            --query 'Vpcs[0].VpcId' \
-            --output text)
+          # Use the existing VPC
+          VPC_ID="vpc-0940a20aa85d8f6bb"
           
           echo "VPC_ID=$VPC_ID" >> $GITHUB_OUTPUT
           echo "VPC: $VPC_ID"
           
-          # Get subnets (need at least 2 for ALB)
-          SUBNETS=$(aws ec2 describe-subnets \
+          # Get first 2 subnets from VPC for ALB
+          SUBNET_1=$(aws ec2 describe-subnets \
             --filters "Name=vpc-id,Values=$VPC_ID" \
-            --query 'Subnets[0:2].SubnetId' \
-            --output json)
+            --query 'Subnets[0].SubnetId' \
+            --output text)
           
-          SUBNET_1=$(echo $SUBNETS | jq -r '.[0]')
-          SUBNET_2=$(echo $SUBNETS | jq -r '.[1]')
+          SUBNET_2=$(aws ec2 describe-subnets \
+            --filters "Name=vpc-id,Values=$VPC_ID" \
+            --query 'Subnets[1].SubnetId' \
+            --output text)
           
           echo "SUBNET_1=$SUBNET_1" >> $GITHUB_OUTPUT
           echo "SUBNET_2=$SUBNET_2" >> $GITHUB_OUTPUT
