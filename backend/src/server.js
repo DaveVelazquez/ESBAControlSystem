@@ -6,8 +6,13 @@ const compression = require('compression');
 const http = require('http');
 const socketIo = require('socket.io');
 
-// Initialize Redis connection
-const { connectRedis } = require('./config/redis');
+// Try to initialize Redis connection (optional)
+let connectRedis = null;
+try {
+  connectRedis = require('./config/redis').connectRedis;
+} catch (err) {
+  console.warn('⚠️  Redis not available, running without cache');
+}
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -19,10 +24,21 @@ const reportsRoutes = require('./routes/reports');
 const locationsRoutes = require('./routes/locations');
 const clientsRoutes = require('./routes/clients');
 
-// Import middleware
-const { errorHandler } = require('./middleware/errorHandler');
-const { rateLimiter } = require('./middleware/rateLimiter');
-const logger = require('./utils/logger');
+// Import middleware (make optional)
+let errorHandler, rateLimiter, logger;
+try {
+  errorHandler = require('./middleware/errorHandler').errorHandler;
+  rateLimiter = require('./middleware/rateLimiter').rateLimiter;
+  logger = require('./utils/logger');
+} catch (err) {
+  console.warn('⚠️  Some middleware not available, using fallback');
+  errorHandler = (err, req, res, next) => {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  };
+  rateLimiter = (req, res, next) => next();
+  logger = console;
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -125,11 +141,15 @@ app.use('*', (req, res) => {
 // Initialize connections
 const initializeServer = async () => {
   try {
-    // Connect to Redis
-    await connectRedis();
-    logger.info('✅ Redis connection initialized');
+    // Connect to Redis (if available)
+    if (connectRedis) {
+      await connectRedis();
+      logger.info('✅ Redis connection initialized');
+    } else {
+      logger.info('⚠️  Running without Redis cache');
+    }
   } catch (error) {
-    logger.warn('⚠️ Redis connection failed, continuing without cache:', error.message);
+    logger.warn('⚠️  Redis connection failed, continuing without cache:', error.message);
   }
 
   // Start server
@@ -138,9 +158,9 @@ const initializeServer = async () => {
 
   server.listen(PORT, HOST, () => {
     logger.info(`🚀 Server running on http://${HOST}:${PORT}`);
-    logger.info(`📝 Environment: ${process.env.NODE_ENV}`);
-    logger.info(`💾 Database: Connected to PostgreSQL`);
-    logger.info(`🗄️ Redis: ${process.env.REDIS_URL ? 'Connected to external Redis' : 'Local Redis'}`);
+    logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+    logger.info(`💾 Database: ${process.env.DATABASE_URL ? 'Connected' : 'Not configured'}`);
+    logger.info(`🗄️  Redis: ${process.env.REDIS_URL ? 'Configured' : 'Not configured'}`);
   });
 };
 
